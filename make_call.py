@@ -1,3 +1,4 @@
+# NOTE: we lowk do not use this script in the project, but is here for reference - vlb
 # Download the helper library from https://www.twilio.com/docs/python/install
 import os
 from twilio.rest import Client

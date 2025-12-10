@@ -1,0 +1,10 @@
+hi just made this bc i want smth to reference while making this project.
+
+third party api calls 
+
+third party calls + saving in db flow (COMPLETE_FLOW.md):
+1. start call in respective .tsx file
+2. go to that route under app/api
+3. go to corresponding file under src/lib/services to actually call external api
+4. get the result, and use src/lib/db to save it to db
+5. propogate back
