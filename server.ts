@@ -2,7 +2,10 @@ import { createServer } from 'http'
 import { parse } from 'url'
 import next from 'next'
 import { WebSocketServer } from 'ws'
+import { writeFile, mkdir, appendFile } from 'fs/promises'
+import { join } from 'path'
 import { AzureSpeechRecognizer } from './src/lib/external/azureSpeech'
+import { DeepgramTranscriber } from './src/lib/external/deepgram'
 import { convertTwilioAudioToPcm } from './src/lib/utils/audioConversion'
 
 const dev = process.env.NODE_ENV !== 'production'
@@ -69,7 +72,8 @@ app.prepare().then(() => {
     console.log('[Media Stream] Request headers:', req.headers)
     
     let recognizer: AzureSpeechRecognizer | null = null
-    const referenceText = 'Hello hello hello' // Default reference text - you can make this configurable
+    let transcriber: DeepgramTranscriber | null = null
+    const referenceText = 'The quick brown fox jumps over the lazy dog. She sells seashells by the seashore. Peter Piper picked a peck of pickled peppers. How much wood would a woodchuck chuck? Unique New York. Red leather, yellow leather. Toy boat. Irish wristwatch.' // Default reference text - you can make this configurable
 
     // Send connection acknowledgment to Twilio
     ws.send(JSON.stringify({ event: 'connected' }))
@@ -77,7 +81,7 @@ app.prepare().then(() => {
     ws.on('message', (data: Buffer) => {
       try {
         const message = JSON.parse(data.toString())
-        console.log('[Media Stream] Received event:', message.event)
+        //console.log('[Media Stream] Received event:', message.event)
         
         // Handle Twilio Media Stream events
         if (message.event === 'connected') {
@@ -100,11 +104,59 @@ app.prepare().then(() => {
             return
           }
           
+          // Store streamSid for use in callbacks
+          const streamSid = message.streamSid
+          
+          // Initialize Deepgram Transcriber
+          try {
+            transcriber = new DeepgramTranscriber({
+              onTranscript: async (result) => {
+                console.log(`[Deepgram] ${result.isFinal ? 'Final' : 'Interim'} transcript: "${result.transcript}"`)
+                
+                // Save transcription to file
+                try {
+                  const resultsDir = join(process.cwd(), 'results')
+                  await mkdir(resultsDir, { recursive: true })
+                  
+                  const transcriptFile = join(resultsDir, `transcription_${streamSid}.txt`)
+                  const timestamp = new Date().toISOString()
+                  const prefix = result.isFinal ? '[FINAL]' : '[INTERIM]'
+                  
+                  let line = `${prefix} [${timestamp}] ${result.transcript}`
+                  
+                  // Add word-level confidence if available
+                  if (result.words && result.words.length > 0) {
+                    const wordConfidences = result.words.map(w => 
+                      `${w.word}(${(w.confidence * 100).toFixed(0)}%)`
+                    ).join(' ')
+                    line += `\n  Word confidence: ${wordConfidences}`
+                  }
+                  
+                  await appendFile(
+                    transcriptFile,
+                    `${line}\n`,
+                    'utf-8'
+                  )
+                } catch (error) {
+                  console.error('[Deepgram] Error saving transcription:', error)
+                }
+              },
+              onError: (error) => {
+                console.error('[Deepgram] Error:', error)
+              },
+            })
+            console.log('[Deepgram] Transcriber initialized')
+          } catch (error: any) {
+            console.error('[Deepgram] Failed to initialize:', error)
+            // Don't fail the whole call if Deepgram fails
+          }
+          
           // Initialize Azure Speech Recognizer
           try {
+            
             recognizer = new AzureSpeechRecognizer({
               referenceText,
-              onResult: (result, text) => {
+              onResult: async (result, text) => {
                 console.log('[Pronunciation] Result received:', {
                   text,
                   accuracy: result.accuracyScore,
@@ -113,6 +165,46 @@ app.prepare().then(() => {
                   fluency: result.fluencyScore,
                   prosody: result.prosodyScore,
                 })
+                
+                // Save results to file
+                try {
+                  const resultsDir = join(process.cwd(), 'results')
+                  await mkdir(resultsDir, { recursive: true })
+                  
+                  const timestamp = new Date().toISOString()
+                  const filename = `pronunciation_${Date.now()}.txt`
+                  const filepath = join(resultsDir, filename)
+                  
+                  let content = `Pronunciation Assessment Result\n`
+                  content += `==============================\n`
+                  content += `Timestamp: ${timestamp}\n`
+                  content += `Stream SID: ${streamSid || 'N/A'}\n`
+                  content += `Reference Text: ${referenceText}\n`
+                  content += `Recognized Text: "${text}"\n\n`
+                  content += `Scores:\n`
+                  content += `  Accuracy: ${result.accuracyScore}%\n`
+                  content += `  Pronunciation: ${result.pronunciationScore}%\n`
+                  content += `  Completeness: ${result.completenessScore}%\n`
+                  content += `  Fluency: ${result.fluencyScore}%\n`
+                  content += `  Prosody: ${result.prosodyScore}%\n\n`
+                  
+                  if (result.words && result.words.length > 0) {
+                    content += `Word-level Details:\n`
+                    result.words.forEach((word, idx) => {
+                      content += `  ${idx + 1}. "${word.word}": ${word.accuracyScore}% (${word.errorType || 'None'})\n`
+                      if (word.phonemes && word.phonemes.length > 0) {
+                        content += `     Phonemes: ${word.phonemes.map(p => `${p.phoneme}(${p.accuracyScore}%)`).join(', ')}\n`
+                      }
+                    })
+                  }
+                  
+                  content += `\n${'='.repeat(30)}\n\n`
+                  
+                  await writeFile(filepath, content, 'utf-8')
+                  console.log(`[Results] Saved to ${filepath}`)
+                } catch (error) {
+                  console.error('[Results] Error saving to file:', error)
+                }
               },
               onError: (error) => {
                 console.error('[Azure] Error:', error)
@@ -185,6 +277,11 @@ app.prepare().then(() => {
                 }
                 
                 recognizer.writeAudioChunk(pcmBuffer)
+                
+                // Also send to Deepgram for transcription
+                if (transcriber) {
+                  transcriber.sendAudio(pcmBuffer)
+                }
               } else {
                 console.warn(`[Media Stream] WARNING: PCM buffer is empty after conversion`)
               }
@@ -205,6 +302,10 @@ app.prepare().then(() => {
             recognizer.close()
             recognizer = null
           }
+          if (transcriber) {
+            transcriber.close()
+            transcriber = null
+          }
         }
       } catch (error) {
         console.error('[Media Stream] Error parsing message:', error)
@@ -218,6 +319,10 @@ app.prepare().then(() => {
         recognizer.close()
         recognizer = null
       }
+      if (transcriber) {
+        transcriber.close()
+        transcriber = null
+      }
     })
 
     ws.on('error', (error) => {
@@ -226,6 +331,10 @@ app.prepare().then(() => {
         recognizer.stop()
         recognizer.close()
         recognizer = null
+      }
+      if (transcriber) {
+        transcriber.close()
+        transcriber = null
       }
     })
   })

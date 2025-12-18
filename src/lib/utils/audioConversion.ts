@@ -18,8 +18,7 @@ export function convertMulawToPcm(mulawBuffer: Buffer): Buffer {
       const decoded = mulaw.decodeSample(mulawBuffer[i])
       decodedValues.push(decoded)
     }
-    console.log(`[Audio Conversion] First ${firstFew} μ-law bytes:`, sampleBytes)
-    console.log(`[Audio Conversion] Decoded PCM values:`, decodedValues)
+   
   }
   
   for (let i = 0; i < mulawBuffer.length; i++) {
