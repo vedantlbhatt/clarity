@@ -10,6 +10,10 @@ export interface PronunciationAssessmentResult {
     word: string
     accuracyScore: number
     errorType: string
+    phonemes?: Array<{
+      phoneme: string
+      accuracyScore: number
+    }>
   }>
 }
 
@@ -55,7 +59,7 @@ export class AzureSpeechRecognizer {
     this.pronunciationConfig = new sdk.PronunciationAssessmentConfig(
       config.referenceText,
       sdk.PronunciationAssessmentGradingSystem.HundredMark,
-      sdk.PronunciationAssessmentGranularity.Word,
+      sdk.PronunciationAssessmentGranularity.Phoneme,
       true // enable miscue detection
     )
     this.pronunciationConfig.enableProsodyAssessment = true
@@ -105,6 +109,10 @@ export class AzureSpeechRecognizer {
               word: word.Word,
               accuracyScore: word.PronunciationAssessment.AccuracyScore,
               errorType: word.PronunciationAssessment.ErrorType,
+              phonemes: word.Phonemes?.map((phoneme: any) => ({
+                phoneme: phoneme.Phoneme || phoneme.Phonemes || 'N/A',
+                accuracyScore: phoneme.PronunciationAssessment?.AccuracyScore || 0,
+              })),
             })),
           }
 
@@ -120,6 +128,9 @@ export class AzureSpeechRecognizer {
             console.log('  Word-level details:')
             result.words.forEach((word, idx) => {
               console.log(`    ${idx + 1}. "${word.word}": ${word.accuracyScore}% (${word.errorType || 'None'})`)
+              if (word.phonemes && word.phonemes.length > 0) {
+                console.log(`       Phonemes: ${word.phonemes.map(p => `${p.phoneme}(${p.accuracyScore}%)`).join(', ')}`)
+              }
             })
           }
 
@@ -158,10 +169,10 @@ export class AzureSpeechRecognizer {
       () => {
         console.log('[Azure] Continuous recognition started')
       },
-      (error) => {
+      (error: any) => {
         console.error('[Azure] Failed to start recognition:', error)
         if (this.config.onError) {
-          this.config.onError(error as Error)
+          this.config.onError(error instanceof Error ? error : new Error(String(error)))
         }
       }
     )
@@ -176,7 +187,7 @@ export class AzureSpeechRecognizer {
     const arrayBuffer = audioChunk.buffer.slice(
       audioChunk.byteOffset,
       audioChunk.byteOffset + audioChunk.byteLength
-    )
+    ) as ArrayBuffer
     this.pushStream.write(arrayBuffer)
   }
 
