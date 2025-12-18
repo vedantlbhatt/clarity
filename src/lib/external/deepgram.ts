@@ -1,9 +1,18 @@
 import { createClient, LiveTranscriptionEvents } from '@deepgram/sdk'
 
+export interface WordDetail {
+  word: string
+  confidence: number
+  start: number
+  end: number
+  punctuated_word?: string
+}
+
 export interface DeepgramTranscriptionResult {
   transcript: string
   isFinal: boolean
-  confidence?: number
+  confidence?: number // Overall confidence for the transcript
+  words?: WordDetail[] // Word-level confidence scores
 }
 
 export interface DeepgramTranscriberConfig {
@@ -39,6 +48,7 @@ export class DeepgramTranscriber {
       interim_results: true, // Get partial transcripts
       punctuate: true,
       diarize: false,
+      filler_words: true, // Detect filler words (um, uh, etc.)
     })
 
     this.connection.on(LiveTranscriptionEvents.Open, () => {
@@ -47,18 +57,36 @@ export class DeepgramTranscriber {
 
     this.connection.on(LiveTranscriptionEvents.Transcript, (data) => {
       if (data.channel?.alternatives?.[0]) {
-        const transcript = data.channel.alternatives[0].transcript
+        const alternative = data.channel.alternatives[0]
+        const transcript = alternative.transcript
         const isFinal = data.is_final || false
-        const confidence = data.channel.alternatives[0].confidence
+        const confidence = alternative.confidence
+
+        // Extract word-level confidence scores
+        const words: WordDetail[] = alternative.words?.map((word: any) => ({
+          word: word.word || '',
+          confidence: word.confidence || 0,
+          start: word.start || 0,
+          end: word.end || 0,
+          punctuated_word: word.punctuated_word,
+        })) || []
 
         if (transcript && transcript.trim()) {
           console.log(`[Deepgram] ${isFinal ? 'Final' : 'Interim'}: "${transcript}"`)
+          
+          // Log word-level confidence for final transcripts
+          if (isFinal && words.length > 0) {
+            console.log(`[Deepgram] Word-level confidence:`, 
+              words.map(w => `${w.word}(${(w.confidence * 100).toFixed(1)}%)`).join(', ')
+            )
+          }
           
           if (this.config.onTranscript) {
             this.config.onTranscript({
               transcript: transcript.trim(),
               isFinal,
               confidence,
+              words: words.length > 0 ? words : undefined,
             })
           }
         }

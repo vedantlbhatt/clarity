@@ -122,9 +122,19 @@ app.prepare().then(() => {
                   const timestamp = new Date().toISOString()
                   const prefix = result.isFinal ? '[FINAL]' : '[INTERIM]'
                   
+                  let line = `${prefix} [${timestamp}] ${result.transcript}`
+                  
+                  // Add word-level confidence if available
+                  if (result.words && result.words.length > 0) {
+                    const wordConfidences = result.words.map(w => 
+                      `${w.word}(${(w.confidence * 100).toFixed(0)}%)`
+                    ).join(' ')
+                    line += `\n  Word confidence: ${wordConfidences}`
+                  }
+                  
                   await appendFile(
                     transcriptFile,
-                    `${prefix} [${timestamp}] ${result.transcript}\n`,
+                    `${line}\n`,
                     'utf-8'
                   )
                 } catch (error) {
