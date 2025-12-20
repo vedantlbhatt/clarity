@@ -1,3 +1,8 @@
+// Load environment variables from .env.local FIRST, before any other imports
+import { config } from 'dotenv'
+import { resolve } from 'path'
+config({ path: resolve(process.cwd(), '.env.local') })
+
 import { createServer } from 'http'
 import { parse } from 'url'
 import next from 'next'
@@ -7,6 +12,8 @@ import { join } from 'path'
 import { AzureSpeechRecognizer } from './src/lib/external/azureSpeech'
 import { DeepgramTranscriber } from './src/lib/external/deepgram'
 import { convertTwilioAudioToPcm } from './src/lib/utils/audioConversion'
+import { CallSession } from './src/lib/session/callSession'
+import { handleFeedbackAt30Seconds } from './src/lib/services/feedbackHandler'
 
 const dev = process.env.NODE_ENV !== 'production'
 const hostname = 'localhost'
@@ -71,8 +78,23 @@ app.prepare().then(() => {
     console.log('[Media Stream] Request URL:', req.url)
     console.log('[Media Stream] Request headers:', req.headers)
     
+    // Extract callSid from query parameters
+    const url = parse(req.url || '', true)
+    const callSidFromQuery = url.query?.callSid as string | undefined
+    
     let recognizer: AzureSpeechRecognizer | null = null
     let transcriber: DeepgramTranscriber | null = null
+    let session: CallSession | null = null
+    let feedbackTriggered = false
+    let baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+    
+    // Try to get base URL from request headers
+    const host = req.headers.host
+    const protocol = req.headers['x-forwarded-proto'] || 'http'
+    if (host && !host.includes('localhost')) {
+      baseUrl = `${protocol}://${host}`
+    }
+    
     const referenceText = 'The quick brown fox jumps over the lazy dog. She sells seashells by the seashore. Peter Piper picked a peck of pickled peppers. How much wood would a woodchuck chuck? Unique New York. Red leather, yellow leather. Toy boat. Irish wristwatch.' // Default reference text - you can make this configurable
 
     // Send connection acknowledgment to Twilio
@@ -106,12 +128,40 @@ app.prepare().then(() => {
           
           // Store streamSid for use in callbacks
           const streamSid = message.streamSid
+          // Try to get callSid from multiple sources
+          const callSid = message.start?.callSid || message.callSid || callSidFromQuery
+          
+          // Create session tracker
+          session = new CallSession(streamSid, callSid)
+          console.log('[Session] CallSid sources:', {
+            fromQuery: callSidFromQuery,
+            fromStart: message.start?.callSid,
+            fromMessage: message.callSid,
+            final: callSid,
+          })
+          console.log('[Session] Created session for stream:', streamSid, 'call:', callSid)
+          
+          // Start timer that checks for 30 seconds
+          session.startTimer((elapsedSeconds) => {
+            if (elapsedSeconds === 30 && !feedbackTriggered) {
+              feedbackTriggered = true
+              console.log('[Session] 30 seconds reached, triggering feedback')
+              handleFeedbackAt30Seconds(session!, baseUrl).catch((error) => {
+                console.error('[Session] Error in feedback handler:', error)
+              })
+            }
+          })
           
           // Initialize Deepgram Transcriber
           try {
             transcriber = new DeepgramTranscriber({
               onTranscript: async (result) => {
                 console.log(`[Deepgram] ${result.isFinal ? 'Final' : 'Interim'} transcript: "${result.transcript}"`)
+                
+                // Store transcript in session
+                if (session) {
+                  session.addTranscript(result)
+                }
                 
                 // Save transcription to file
                 try {
@@ -165,6 +215,11 @@ app.prepare().then(() => {
                   fluency: result.fluencyScore,
                   prosody: result.prosodyScore,
                 })
+                
+                // Store Azure result in session
+                if (session) {
+                  session.addAzureResult(result, text)
+                }
                 
                 // Save results to file
                 try {
@@ -243,6 +298,11 @@ app.prepare().then(() => {
               // Convert μ-law to PCM
               const pcmBuffer = convertTwilioAudioToPcm(message.media.payload)
               
+              // Store audio chunk in session
+              if (session) {
+                session.addAudioChunk(pcmBuffer)
+              }
+              
               // Send PCM audio to Azure
               // Only write if buffer has data
               if (pcmBuffer.length > 0) {
@@ -297,6 +357,11 @@ app.prepare().then(() => {
           }
         } else if (message.event === 'stop') {
           console.log('[Media Stream] Stream stopped')
+          if (session) {
+            session.stopTimer()
+            session.cleanup()
+            session = null
+          }
           if (recognizer) {
             recognizer.stop()
             recognizer.close()
@@ -314,6 +379,11 @@ app.prepare().then(() => {
 
     ws.on('close', () => {
       console.log('[Media Stream] WebSocket connection closed')
+      if (session) {
+        session.stopTimer()
+        session.cleanup()
+        session = null
+      }
       if (recognizer) {
         recognizer.stop()
         recognizer.close()
@@ -327,6 +397,11 @@ app.prepare().then(() => {
 
     ws.on('error', (error) => {
       console.error('[Media Stream] WebSocket error:', error)
+      if (session) {
+        session.stopTimer()
+        session.cleanup()
+        session = null
+      }
       if (recognizer) {
         recognizer.stop()
         recognizer.close()
