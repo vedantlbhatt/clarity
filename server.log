@@ -1,0 +1,461 @@
+
+> clarity@0.1.0 dev
+> tsx server.ts
+
+[dotenv@17.2.3] injecting env (8) from .env.local -- tip: ⚙️  load multiple .env files with { path: ['.env.local', '.env'] }
+> Ready on http://localhost:3000
+> WebSocket server ready on ws://localhost:3000/api/media-stream
+ ✓ Compiled /api/incoming-call in 100ms (56 modules)
+[Incoming Call] Webhook received
+[Incoming Call] CallSid from formData: TEST
+[Incoming Call] Base URL: https://theomorphic-flashingly-florrie.ngrok-free.dev
+[Incoming Call] Media Stream URL: wss://theomorphic-flashingly-florrie.ngrok-free.dev/api/media-stream?callSid=TEST
+[Incoming Call] Returning TwiML
+ POST /api/incoming-call 200 in 172ms
+ ✓ Compiled in 44ms (56 modules)
+ ✓ Compiled in 36ms (56 modules)
+ ✓ Compiled in 9ms
+ ✓ Compiled /api/incoming-call in 33ms (56 modules)
+[Incoming Call] Webhook received
+[Incoming Call] Request URL: https://localhost:3000/api/incoming-call
+[Incoming Call] Headers: {
+  accept: '*/*',
+  'accept-encoding': 'gzip',
+  'content-length': '12',
+  'content-type': 'application/x-www-form-urlencoded',
+  host: 'theomorphic-flashingly-florrie.ngrok-free.dev',
+  'ngrok-skip-browser-warning': 'true',
+  'user-agent': 'curl/8.7.1',
+  'x-forwarded-for': '76.213.140.155',
+  'x-forwarded-host': 'theomorphic-flashingly-florrie.ngrok-free.dev',
+  'x-forwarded-port': '3000',
+  'x-forwarded-proto': 'https'
+}
+[Incoming Call] CallSid from formData: TEST
+[Incoming Call] Base URL: https://theomorphic-flashingly-florrie.ngrok-free.dev
+[Incoming Call] Media Stream URL: wss://theomorphic-flashingly-florrie.ngrok-free.dev/api/media-stream?callSid=TEST
+[Incoming Call] Returning TwiML
+ POST /api/incoming-call 200 in 83ms
+[Incoming Call] Webhook received
+[Incoming Call] Request URL: https://localhost:3000/api/incoming-call
+[Incoming Call] Headers: {
+  accept: '*/*',
+  'accept-encoding': 'gzip',
+  'content-length': '12',
+  'content-type': 'application/x-www-form-urlencoded',
+  host: 'theomorphic-flashingly-florrie.ngrok-free.dev',
+  'user-agent': 'TwilioProxy/1.1',
+  'x-forwarded-for': '76.213.140.155',
+  'x-forwarded-host': 'theomorphic-flashingly-florrie.ngrok-free.dev',
+  'x-forwarded-port': '3000',
+  'x-forwarded-proto': 'https'
+}
+[Incoming Call] CallSid from formData: TEST
+[Incoming Call] Base URL: https://theomorphic-flashingly-florrie.ngrok-free.dev
+[Incoming Call] Media Stream URL: wss://theomorphic-flashingly-florrie.ngrok-free.dev/api/media-stream?callSid=TEST
+[Incoming Call] Returning TwiML
+ POST /api/incoming-call 200 in 5ms
+[Incoming Call] Webhook received
+[Incoming Call] Request URL: https://localhost:3000/api/incoming-call
+[Incoming Call] Headers: {
+  accept: '*/*',
+  'accept-encoding': 'gzip',
+  'content-length': '33',
+  'content-type': 'application/x-www-form-urlencoded',
+  host: 'theomorphic-flashingly-florrie.ngrok-free.dev',
+  'user-agent': 'TwilioProxy/1.1',
+  'x-forwarded-for': '76.213.140.155',
+  'x-forwarded-host': 'theomorphic-flashingly-florrie.ngrok-free.dev',
+  'x-forwarded-port': '3000',
+  'x-forwarded-proto': 'https',
+  'x-twilio-signature': 'test'
+}
+[Incoming Call] CallSid from formData: CA123
+[Incoming Call] Base URL: https://theomorphic-flashingly-florrie.ngrok-free.dev
+[Incoming Call] Media Stream URL: wss://theomorphic-flashingly-florrie.ngrok-free.dev/api/media-stream?callSid=CA123
+[Incoming Call] Returning TwiML
+ POST /api/incoming-call 200 in 4ms
+ ✓ Compiled in 26ms (56 modules)
+[Incoming Call] Webhook received
+[Incoming Call] Request URL: https://localhost:3000/api/incoming-call
+[Incoming Call] Headers: {
+  accept: '*/*',
+  'accept-encoding': 'gzip',
+  'content-length': '814',
+  'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+  host: 'theomorphic-flashingly-florrie.ngrok-free.dev',
+  'i-twilio-idempotency-token': '4a637f57-5273-4672-ad7c-14742c7ee84b',
+  'user-agent': 'TwilioProxy/1.1',
+  'x-forwarded-for': '44.203.130.116',
+  'x-forwarded-host': 'theomorphic-flashingly-florrie.ngrok-free.dev',
+  'x-forwarded-port': '3000',
+  'x-forwarded-proto': 'https',
+  'x-home-region': 'us1',
+  'x-twilio-answertimeout': 'PT15S, PT15S',
+  'x-twilio-service-flow-event': '%7B%22flow_id%22%3A%22RQ3049852f0cf89712816ecfd9102930d2%22%2C%22type%22%3A%22api_event%22%2C%22action%22%3A%22twiml_fetch%22%2C%22sub_action%22%3A%22completed%22%2C%22result%22%3A%22success%22%2C%22metadata%22%3A%7B%22transfer_type%22%3A%22call_transfer_url%22%7D%7D',
+  'x-twilio-signature': 'ZLghZq4e02PGw5bX5vNno+t6a58='
+}
+[Incoming Call] CallSid from formData: CAcf45a699c37f3e8077ba2dd2b582b4a2
+[Incoming Call] Base URL: https://theomorphic-flashingly-florrie.ngrok-free.dev
+[Incoming Call] Media Stream URL: wss://theomorphic-flashingly-florrie.ngrok-free.dev/api/media-stream?callSid=CAcf45a699c37f3e8077ba2dd2b582b4a2
+[Incoming Call] Returning TwiML
+ POST /api/incoming-call 200 in 44ms
+[Media Stream] Upgrade request received for /api/media-stream
+[Media Stream] WebSocket upgrade request from: undefined
+[Media Stream] Request path: /api/media-stream
+[Media Stream] WebSocket connection established
+[Media Stream] Request URL: /api/media-stream
+[Media Stream] Request headers: {
+  host: 'theomorphic-flashingly-florrie.ngrok-free.dev',
+  'user-agent': 'Twilio.TmeWs/1.0',
+  connection: 'Upgrade',
+  'sec-websocket-key': '5JMtkMX03tgxyKTLi2C79Q==',
+  'sec-websocket-version': '13',
+  upgrade: 'websocket',
+  'x-forwarded-for': '44.204.50.241',
+  'x-forwarded-host': 'theomorphic-flashingly-florrie.ngrok-free.dev',
+  'x-forwarded-proto': 'https',
+  'x-twilio-signature': '2RA66LwYiJGIVwA2cBhUiSUTvo8=',
+  'accept-encoding': 'gzip'
+}
+[Media Stream] Connected event received
+[Media Stream] Stream started
+[Media Stream] Start details: {
+  streamSid: 'MZ7bbff0b157bd00c5978d5a669b992251',
+  tracks: [ 'inbound' ],
+  mediaFormat: { encoding: 'audio/x-mulaw', sampleRate: 8000, channels: 1 }
+}
+[Session] CallSid sources: {
+  fromQuery: undefined,
+  fromStart: 'CAcf45a699c37f3e8077ba2dd2b582b4a2',
+  fromMessage: undefined,
+  final: 'CAcf45a699c37f3e8077ba2dd2b582b4a2'
+}
+[Session] Created session for stream: MZ7bbff0b157bd00c5978d5a669b992251 call: CAcf45a699c37f3e8077ba2dd2b582b4a2
+[Deepgram] Transcriber initialized
+[Azure] Audio format configured: 8kHz, 16-bit, mono PCM
+[Azure] Using unscripted mode (no reference text)
+[Azure] Pronunciation assessment config applied successfully
+[Azure] Recognizer started in unscripted mode (no reference text)
+[Media Stream] Media event #1: payload length=216 chars
+[Media Stream] Converted to PCM: 320 bytes
+[Media Stream] Sample analysis: 0 non-silent samples, max amplitude: 8
+[Media Stream] Media event #2: payload length=216 chars
+[Media Stream] Converted to PCM: 320 bytes
+[Media Stream] Sample analysis: 0 non-silent samples, max amplitude: 8
+[Media Stream] Media event #3: payload length=216 chars
+[Media Stream] Converted to PCM: 320 bytes
+[Media Stream] Sample analysis: 0 non-silent samples, max amplitude: 8
+[Media Stream] Media event #4: payload length=216 chars
+[Media Stream] Converted to PCM: 320 bytes
+[Media Stream] Sample analysis: 0 non-silent samples, max amplitude: 8
+[Media Stream] Media event #5: payload length=216 chars
+[Media Stream] Converted to PCM: 320 bytes
+[Media Stream] Sample analysis: 0 non-silent samples, max amplitude: 8
+[Azure] Continuous recognition started
+[Deepgram] Connection opened
+[Media Stream] WARNING: Audio chunk appears to be silence
+[Media Stream] WARNING: Audio chunk appears to be silence
+ ✓ Compiled in 38ms (56 modules)
+[Deepgram] Final: "The"
+[Deepgram] Word-level confidence: the(27.3%)
+[Deepgram] Final transcript: "The"
+[Azure] Recognizing (partial): "oh"
+[Azure] Recognized (final): "Oh."
+[Azure] Raw pronunciation result: {
+  hasDetailResult: true,
+  accuracyScore: 92,
+  pronunciationScore: 51.7,
+  completenessScore: 100,
+  fluencyScore: 100,
+  prosodyScore: 22.1
+}
+[Azure] Pronunciation Assessment Result:
+  Text: "Oh."
+  Accuracy: 92%
+  Pronunciation: 51.7%
+  Completeness: 100%
+  Fluency: 100%
+  Prosody: 22.1%
+  Word-level details:
+    1. "oh": 92% (None)
+       Phonemes: ow(89%)
+[Pronunciation] Result received: {
+  text: 'Oh.',
+  accuracy: 92,
+  pronunciation: 51.7,
+  completeness: 100,
+  fluency: 100,
+  prosody: 22.1
+}
+[Results] Saved to /Users/vedantbhatt/clarity/results/pronunciation_1766287569333.txt
+[Deepgram] Final: "Hello?"
+[Deepgram] Word-level confidence: hello(99.1%)
+[Deepgram] Final transcript: "Hello?"
+[Azure] Recognizing (partial): "hello"
+[Azure] Recognized (final): "Hello."
+[Azure] Raw pronunciation result: {
+  hasDetailResult: true,
+  accuracyScore: 92,
+  pronunciationScore: 75.7,
+  completenessScore: 100,
+  fluencyScore: 100,
+  prosodyScore: 62.2
+}
+[Azure] Pronunciation Assessment Result:
+  Text: "Hello."
+  Accuracy: 92%
+  Pronunciation: 75.7%
+  Completeness: 100%
+  Fluency: 100%
+  Prosody: 62.2%
+  Word-level details:
+    1. "hello": 92% (None)
+       Phonemes: h(86%), ax(100%), l(100%), ow(88%)
+[Pronunciation] Result received: {
+  text: 'Hello.',
+  accuracy: 92,
+  pronunciation: 75.7,
+  completeness: 100,
+  fluency: 100,
+  prosody: 62.2
+}
+[Results] Saved to /Users/vedantbhatt/clarity/results/pronunciation_1766287572879.txt
+[Deepgram] Interim: "Hello?"
+[Deepgram] Interim transcript: "Hello?"
+[Media Stream] WARNING: Audio chunk appears to be silence
+[Deepgram] Interim: "Hello?"
+[Deepgram] Interim transcript: "Hello?"
+[Deepgram] Interim: "My name is Vadhan."
+[Deepgram] Interim transcript: "My name is Vadhan."
+[Azure] Recognizing (partial): "my name"
+[Deepgram] Final: "My name is Vedant."
+[Deepgram] Word-level confidence: my(99.2%), name(100.0%), is(99.8%), vedant(88.8%)
+[Deepgram] Final transcript: "My name is Vedant."
+[Azure] Recognizing (partial): "my name is"
+[Azure] Recognizing (partial): "my name is don"
+[Azure] Recognizing (partial): "my name is vidant"
+[Azure] Recognized (final): "My name is Vidant."
+[Azure] Raw pronunciation result: {
+  hasDetailResult: true,
+  accuracyScore: 91,
+  pronunciationScore: 87.9,
+  completenessScore: 100,
+  fluencyScore: 100,
+  prosodyScore: 82.8
+}
+[Azure] Pronunciation Assessment Result:
+  Text: "My name is Vidant."
+  Accuracy: 91%
+  Pronunciation: 87.9%
+  Completeness: 100%
+  Fluency: 100%
+  Prosody: 82.8%
+  Word-level details:
+    1. "my": 97% (None)
+       Phonemes: m(100%), ay(92%)
+    2. "name": 100% (None)
+       Phonemes: n(100%), ey(100%), m(100%)
+    3. "is": 97% (None)
+       Phonemes: ih(100%), z(94%)
+    4. "vidant": 70% (None)
+       Phonemes: v(59%), ih(59%), d(100%), aa(100%), n(100%), t(58%)
+[Pronunciation] Result received: {
+  text: 'My name is Vidant.',
+  accuracy: 91,
+  pronunciation: 87.9,
+  completeness: 100,
+  fluency: 100,
+  prosody: 82.8
+}
+[Results] Saved to /Users/vedantbhatt/clarity/results/pronunciation_1766287577177.txt
+[Media Stream] WARNING: Audio chunk appears to be silence
+[Media Stream] WARNING: Audio chunk appears to be silence
+[Deepgram] Final: "Evine window."
+[Deepgram] Word-level confidence: evine(36.2%), window(61.2%)
+[Deepgram] Final transcript: "Evine window."
+[Media Stream] WARNING: Audio chunk appears to be silence
+[Azure] Recognizing (partial): "window"
+[Azure] Recognized (final): "Window."
+[Azure] Raw pronunciation result: {
+  hasDetailResult: true,
+  accuracyScore: 80,
+  pronunciationScore: 76.1,
+  completenessScore: 100,
+  fluencyScore: 100,
+  prosodyScore: 66.8
+}
+[Azure] Pronunciation Assessment Result:
+  Text: "Window."
+  Accuracy: 80%
+  Pronunciation: 76.1%
+  Completeness: 100%
+  Fluency: 100%
+  Prosody: 66.8%
+  Word-level details:
+    1. "window": 80% (None)
+       Phonemes: w(0%), ih(48%), n(80%), d(92%), ow(82%)
+[Pronunciation] Result received: {
+  text: 'Window.',
+  accuracy: 80,
+  pronunciation: 76.1,
+  completeness: 100,
+  fluency: 100,
+  prosody: 66.8
+}
+[Results] Saved to /Users/vedantbhatt/clarity/results/pronunciation_1766287586986.txt
+[Media Stream] WARNING: Audio chunk appears to be silence
+[Media Stream] WARNING: Audio chunk appears to be silence
+[Session] 30 seconds reached, triggering feedback
+[Feedback Handler] Starting feedback generation at 30 seconds
+[Feedback Handler] Processed data: {
+  transcriptLength: 43,
+  wordsPerMinute: 16,
+  fillerCount: 0,
+  avgAccuracy: 88.8
+}
+[Feedback Generator] Using Gemini API with key: AIzaSyCOrj...
+[Deepgram] Final: "Bravo."
+[Deepgram] Word-level confidence: bravo(75.7%)
+[Deepgram] Final transcript: "Bravo."
+[Media Stream] WARNING: Audio chunk appears to be silence
+[Azure] Recognizing (partial): "bro"
+[Azure] Recognized (final): "Bro."
+[Azure] Raw pronunciation result: {
+  hasDetailResult: true,
+  accuracyScore: 76,
+  pronunciationScore: 68.3,
+  completenessScore: 100,
+  fluencyScore: 100,
+  prosodyScore: 55.2
+}
+[Azure] Pronunciation Assessment Result:
+  Text: "Bro."
+  Accuracy: 76%
+  Pronunciation: 68.3%
+  Completeness: 100%
+  Fluency: 100%
+  Prosody: 55.2%
+  Word-level details:
+    1. "bro": 76% (None)
+       Phonemes: b(62%), r(100%), ow(61%)
+[Pronunciation] Result received: {
+  text: 'Bro.',
+  accuracy: 76,
+  pronunciation: 68.3,
+  completeness: 100,
+  fluency: 100,
+  prosody: 55.2
+}
+[Results] Saved to /Users/vedantbhatt/clarity/results/pronunciation_1766287593635.txt
+[Media Stream] WARNING: Audio chunk appears to be silence
+[Media Stream] WARNING: Audio chunk appears to be silence
+[Media Stream] WARNING: Audio chunk appears to be silence
+[Media Stream] WARNING: Audio chunk appears to be silence
+[Feedback Handler] Generated feedback: That's a great start, and it's wonderful that you used no filler words and maintained excellent completeness! To enhance your natural flow and prosody, try increasing your speaking pace slightly, aiming for a more conversational rhythm. Additionally, practice clearly articulating the 'v,' 'ih,' and 't' sounds in "Vedant," and pay special attention to the 'w' and 'ih' sounds when you say "window" for improved clarity.
+[Deepgram] Interim: "Hey."
+[Deepgram] Interim transcript: "Hey."
+[Deepgram] Final: "Hey."
+[Deepgram] Word-level confidence: hey(66.0%)
+[Deepgram] Final transcript: "Hey."
+[Azure] Recognizing (partial): "hey"
+[Feedback Handler] TTS audio saved to: /Users/vedantbhatt/clarity/results/tts/feedback_MZ7bbff0b157bd00c5978d5a669b992251_1766287597430.wav
+[Media Stream] WARNING: Audio chunk appears to be silence
+[Azure] Recognized (final): "Hey."
+[Azure] Raw pronunciation result: {
+  hasDetailResult: true,
+  accuracyScore: 80,
+  pronunciationScore: 60.7,
+  completenessScore: 100,
+  fluencyScore: 100,
+  prosodyScore: 41.1
+}
+[Azure] Pronunciation Assessment Result:
+  Text: "Hey."
+  Accuracy: 80%
+  Pronunciation: 60.7%
+  Completeness: 100%
+  Fluency: 100%
+  Prosody: 41.1%
+  Word-level details:
+    1. "hey": 80% (None)
+       Phonemes: h(55%), ey(89%)
+[Pronunciation] Result received: {
+  text: 'Hey.',
+  accuracy: 80,
+  pronunciation: 60.7,
+  completeness: 100,
+  fluency: 100,
+  prosody: 41.1
+}
+[Results] Saved to /Users/vedantbhatt/clarity/results/pronunciation_1766287601039.txt
+[Feedback Handler] Updated call with audio playback
+[Deepgram] Interim: "My"
+[Deepgram] Interim transcript: "My"
+[Azure] Recognizing (partial): "my"
+[Deepgram] Interim: "My name is"
+[Deepgram] Interim transcript: "My name is"
+[Azure] Recognizing (partial): "my name"
+[Azure] Recognizing (partial): "my name is"
+[Azure] Recognizing (partial): "my name is that"
+[Deepgram] Final: "My name is Zadad Ahmed."
+[Deepgram] Word-level confidence: my(100.0%), name(100.0%), is(100.0%), zadad(30.4%), ahmed(38.8%)
+[Deepgram] Final transcript: "My name is Zadad Ahmed."
+ ✓ Compiled /api/tts-audio/[filename] in 62ms (60 modules)
+[Azure] Recognizing (partial): "my name is doctor"
+ GET /api/tts-audio/feedback_MZ7bbff0b157bd00c5978d5a669b992251_1766287597430.wav 200 in 354ms
+[Azure] Recognizing (partial): "my name is doctor box"
+[Azure] Recognized (final): "My name is Doctor Box."
+[Azure] Raw pronunciation result: {
+  hasDetailResult: true,
+  accuracyScore: 90,
+  pronunciationScore: 82.4,
+  completenessScore: 100,
+  fluencyScore: 99,
+  prosodyScore: 74.3
+}
+[Azure] Pronunciation Assessment Result:
+  Text: "My name is Doctor Box."
+  Accuracy: 90%
+  Pronunciation: 82.4%
+  Completeness: 100%
+  Fluency: 99%
+  Prosody: 74.3%
+  Word-level details:
+    1. "my": 94% (None)
+       Phonemes: m(100%), ay(78%)
+    2. "name": 91% (None)
+       Phonemes: n(99%), ey(85%), m(56%)
+    3. "is": 91% (None)
+       Phonemes: ih(100%), z(76%)
+    4. "doctor": 91% (None)
+       Phonemes: d(32%), aa(92%), k(88%), t(96%), ax(100%), r(0%)
+    5. "box": 85% (None)
+       Phonemes: b(95%), aa(79%), k(72%), s(64%)
+[Pronunciation] Result received: {
+  text: 'My name is Doctor Box.',
+  accuracy: 90,
+  pronunciation: 82.4,
+  completeness: 100,
+  fluency: 99,
+  prosody: 74.3
+}
+[Results] Saved to /Users/vedantbhatt/clarity/results/pronunciation_1766287604070.txt
+[Deepgram] Interim: "I"
+[Deepgram] Interim transcript: "I"
+[Media Stream] WARNING: Audio chunk appears to be silence
+[Media Stream] WARNING: Audio chunk appears to be silence
+[Media Stream] WARNING: Audio chunk appears to be silence
+[Media Stream] WARNING: Audio chunk appears to be silence
+[Media Stream] WARNING: Audio chunk appears to be silence
+[Media Stream] WARNING: Audio chunk appears to be silence
+[Media Stream] WARNING: Audio chunk appears to be silence
+[Media Stream] Stream stopped
+[Azure] AudioConfig close skipped (not supported)
+[Azure] Recognizer closed
+[Deepgram] Transcriber closed
+[Azure] Session stopped
+[Azure] Continuous recognition stopped
+[Azure] Continuous recognition stopped
+[Deepgram] Connection closed
+[Media Stream] WebSocket connection closed

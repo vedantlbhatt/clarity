@@ -18,7 +18,7 @@ export interface PronunciationAssessmentResult {
 }
 
 export interface AzureSpeechRecognizerConfig {
-  referenceText: string
+  referenceText?: string // Optional: if not provided, uses unscripted mode
   onResult?: (result: PronunciationAssessmentResult, text: string) => void
   onError?: (error: Error) => void
 }
@@ -28,9 +28,10 @@ export class AzureSpeechRecognizer {
   private audioConfig: sdk.AudioConfig
   private pushStream: sdk.PushAudioInputStream
   private recognizer: sdk.SpeechRecognizer | null = null
-  private pronunciationConfig: sdk.PronunciationAssessmentConfig
   private isClosed = false
   private config: AzureSpeechRecognizerConfig
+  private audioBuffer: Buffer[] = [] // Buffer audio chunks for two-step processing
+  private isProcessing = false // Flag to prevent concurrent processing
 
   constructor(config: AzureSpeechRecognizerConfig) {
     this.config = config
@@ -45,6 +46,10 @@ export class AzureSpeechRecognizer {
     // Create speech config
     this.speechConfig = sdk.SpeechConfig.fromSubscription(subscriptionKey, region)
     this.speechConfig.speechRecognitionLanguage = 'en-US'
+    
+    // Enable detailed output format to get word-level confidence
+    this.speechConfig.setProperty(sdk.PropertyId.SpeechServiceResponse_RequestWordLevelTimestamps, "true")
+    this.speechConfig.outputFormat = sdk.OutputFormat.Detailed
 
     // Create push audio input stream for real-time audio
     // Azure Pronunciation Assessment works better with 16kHz, but Twilio sends 8kHz
@@ -55,20 +60,13 @@ export class AzureSpeechRecognizer {
     
     console.log('[Azure] Audio format configured: 8kHz, 16-bit, mono PCM')
 
-    // Create pronunciation assessment config
-    this.pronunciationConfig = new sdk.PronunciationAssessmentConfig(
-      config.referenceText,
-      sdk.PronunciationAssessmentGradingSystem.HundredMark,
-      sdk.PronunciationAssessmentGranularity.Phoneme,
-      true // enable miscue detection
-    )
-    this.pronunciationConfig.enableProsodyAssessment = true
-
-    // Create recognizer
+    // Create recognizer for STT (no pronunciation assessment initially)
+    // We'll use two-step approach: STT first, then scripted pronunciation assessment
     this.recognizer = new sdk.SpeechRecognizer(this.speechConfig, this.audioConfig)
-
-    // Apply pronunciation assessment
-    this.pronunciationConfig.applyTo(this.recognizer)
+    
+    console.log('[Azure] Using two-step approach: STT first, then scripted pronunciation assessment')
+    
+    // Don't apply pronunciation assessment yet - we'll do it after getting STT transcript
 
     // Set up event handlers
     this.setupEventHandlers()
@@ -84,11 +82,12 @@ export class AzureSpeechRecognizer {
       }
     }
 
-    // Handle recognized results (final)
-    this.recognizer.recognized = (s, e) => {
+    // Handle recognized results (final) - Step 1: Get accurate STT transcript
+    this.recognizer.recognized = async (s, e) => {
+      console.log(`[Azure] Recognition event fired - Reason: ${e.result.reason}, Text: "${e.result.text || '(empty)'}"`)
       if (e.result.reason === sdk.ResultReason.RecognizedSpeech && e.result.text) {
         const text = e.result.text.trim()
-        console.log(`[Azure] Recognized (final): "${text}"`)
+        console.log(`[Azure] Step 1 - STT Recognized (final): "${text}"`)
         
         // Log everything, even if it's just punctuation, so we can see what Azure is hearing
         if (!text || text === '.' || text.length < 2) {
@@ -96,50 +95,28 @@ export class AzureSpeechRecognizer {
           return
         }
         
-        try {
-          const pronunciationResult = sdk.PronunciationAssessmentResult.fromResult(e.result)
-          
-          const result: PronunciationAssessmentResult = {
-            accuracyScore: pronunciationResult.accuracyScore,
-            pronunciationScore: pronunciationResult.pronunciationScore,
-            completenessScore: pronunciationResult.completenessScore,
-            fluencyScore: pronunciationResult.fluencyScore,
-            prosodyScore: pronunciationResult.prosodyScore,
-            words: pronunciationResult.detailResult?.Words?.map((word: any) => ({
-              word: word.Word,
-              accuracyScore: word.PronunciationAssessment.AccuracyScore,
-              errorType: word.PronunciationAssessment.ErrorType,
-              phonemes: word.Phonemes?.map((phoneme: any) => ({
-                phoneme: phoneme.Phoneme || phoneme.Phonemes || 'N/A',
-                accuracyScore: phoneme.PronunciationAssessment?.AccuracyScore || 0,
-              })),
-            })),
-          }
-
-          console.log('[Azure] Pronunciation Assessment Result:')
-          console.log(`  Text: "${e.result.text}"`)
-          console.log(`  Accuracy: ${result.accuracyScore}%`)
-          console.log(`  Pronunciation: ${result.pronunciationScore}%`)
-          console.log(`  Completeness: ${result.completenessScore}%`)
-          console.log(`  Fluency: ${result.fluencyScore}%`)
-          console.log(`  Prosody: ${result.prosodyScore}%`)
-
-          if (result.words && result.words.length > 0) {
-            console.log('  Word-level details:')
-            result.words.forEach((word, idx) => {
-              console.log(`    ${idx + 1}. "${word.word}": ${word.accuracyScore}% (${word.errorType || 'None'})`)
-              if (word.phonemes && word.phonemes.length > 0) {
-                console.log(`       Phonemes: ${word.phonemes.map(p => `${p.phoneme}(${p.accuracyScore}%)`).join(', ')}`)
-              }
-            })
-          }
-
-          if (this.config.onResult) {
-            this.config.onResult(result, e.result.text)
-          }
-        } catch (error) {
-          console.error('[Azure] Error parsing pronunciation result:', error)
+        // Prevent concurrent processing
+        if (this.isProcessing) {
+          console.log('[Azure] Already processing, skipping...')
+          return
         }
+        this.isProcessing = true
+        
+        try {
+          // Step 2: Do scripted pronunciation assessment using STT transcript
+          await this.doScriptedPronunciationAssessment(text)
+        } catch (error) {
+          console.error('[Azure] Error in two-step process:', error)
+          if (this.config.onError) {
+            this.config.onError(error instanceof Error ? error : new Error(String(error)))
+          }
+        } finally {
+          this.isProcessing = false
+          // Clear audio buffer after processing
+          this.audioBuffer = []
+        }
+      } else {
+        console.log(`[Azure] Recognition event but not RecognizedSpeech - Reason: ${e.result.reason}`)
       }
     }
 
@@ -182,6 +159,9 @@ export class AzureSpeechRecognizer {
     if (this.isClosed) {
       return
     }
+    // Buffer audio chunk for two-step processing
+    this.audioBuffer.push(Buffer.from(audioChunk))
+    
     // Convert Node.js Buffer to ArrayBuffer for Azure SDK
     // Buffer.buffer is the underlying ArrayBuffer, but we need to slice it to the correct size
     const arrayBuffer = audioChunk.buffer.slice(
@@ -189,6 +169,116 @@ export class AzureSpeechRecognizer {
       audioChunk.byteOffset + audioChunk.byteLength
     ) as ArrayBuffer
     this.pushStream.write(arrayBuffer)
+  }
+
+  /**
+   * Step 2: Do scripted pronunciation assessment using STT transcript
+   * This uses the accurate transcript from STT for better pronunciation assessment
+   */
+  private async doScriptedPronunciationAssessment(referenceText: string): Promise<void> {
+    console.log(`[Azure] Step 2 - Starting scripted pronunciation assessment with transcript: "${referenceText}"`)
+    
+    // Create a new recognizer for pronunciation assessment
+    // Note: We'll use the buffered audio if available, otherwise this is a limitation
+    const assessmentAudioFormat = sdk.AudioStreamFormat.getWaveFormatPCM(8000, 16, 1)
+    const assessmentPushStream = sdk.AudioInputStream.createPushStream(assessmentAudioFormat)
+    const assessmentAudioConfig = sdk.AudioConfig.fromStreamInput(assessmentPushStream)
+    
+    const assessmentRecognizer = new sdk.SpeechRecognizer(this.speechConfig, assessmentAudioConfig)
+    
+    // Create scripted pronunciation assessment config using STT transcript
+    const assessmentConfig = new sdk.PronunciationAssessmentConfig(
+      referenceText, // Use STT transcript as reference (scripted mode)
+      sdk.PronunciationAssessmentGradingSystem.HundredMark,
+      sdk.PronunciationAssessmentGranularity.Phoneme,
+      true // Enable miscue detection for scripted mode
+    )
+    assessmentConfig.enableProsodyAssessment = true
+    assessmentConfig.applyTo(assessmentRecognizer)
+    
+    console.log('[Azure] Scripted pronunciation assessment config applied')
+    
+    // Replay buffered audio for assessment
+    if (this.audioBuffer.length > 0) {
+      const totalAudio = Buffer.concat(this.audioBuffer)
+      const arrayBuffer = totalAudio.buffer.slice(
+        totalAudio.byteOffset,
+        totalAudio.byteOffset + totalAudio.byteLength
+      ) as ArrayBuffer
+      assessmentPushStream.write(arrayBuffer)
+      assessmentPushStream.close()
+      console.log(`[Azure] Replayed ${this.audioBuffer.length} audio chunks (${totalAudio.length} bytes) for assessment`)
+    } else {
+      console.warn('[Azure] No buffered audio available - assessment may be incomplete')
+      assessmentPushStream.close()
+    }
+    
+    // Perform one-shot recognition with pronunciation assessment
+    return new Promise((resolve, reject) => {
+      assessmentRecognizer.recognizeOnceAsync(
+        (result) => {
+          try {
+            if (result.reason === sdk.ResultReason.RecognizedSpeech) {
+              const pronunciationResult = sdk.PronunciationAssessmentResult.fromResult(result)
+              
+              const assessmentResult: PronunciationAssessmentResult = {
+                accuracyScore: pronunciationResult.accuracyScore,
+                pronunciationScore: pronunciationResult.pronunciationScore,
+                completenessScore: pronunciationResult.completenessScore,
+                fluencyScore: pronunciationResult.fluencyScore,
+                prosodyScore: pronunciationResult.prosodyScore,
+                words: pronunciationResult.detailResult?.Words?.map((word: any) => ({
+                  word: word.Word,
+                  accuracyScore: word.PronunciationAssessment?.AccuracyScore || 0,
+                  errorType: word.PronunciationAssessment?.ErrorType || 'None',
+                  phonemes: word.Phonemes?.map((phoneme: any) => ({
+                    phoneme: phoneme.Phoneme || phoneme.Phonemes || 'N/A',
+                    accuracyScore: phoneme.PronunciationAssessment?.AccuracyScore || 0,
+                  })),
+                })),
+              }
+              
+              console.log('[Azure] Step 2 - Pronunciation Assessment Result:')
+              console.log(`  Text: "${result.text}"`)
+              console.log(`  Accuracy: ${assessmentResult.accuracyScore}%`)
+              console.log(`  Pronunciation: ${assessmentResult.pronunciationScore}%`)
+              console.log(`  Completeness: ${assessmentResult.completenessScore}%`)
+              console.log(`  Fluency: ${assessmentResult.fluencyScore}%`)
+              console.log(`  Prosody: ${assessmentResult.prosodyScore}%`)
+              
+              if (assessmentResult.words && assessmentResult.words.length > 0) {
+                console.log('  Word-level details:')
+                assessmentResult.words.forEach((word, idx) => {
+                  console.log(`    ${idx + 1}. "${word.word}": ${word.accuracyScore}% (${word.errorType || 'None'})`)
+                })
+              }
+              
+              // Call callback with assessment result
+              if (this.config.onResult) {
+                this.config.onResult(assessmentResult, result.text)
+              }
+              
+              assessmentRecognizer.close()
+              resolve()
+            } else {
+              const error = new Error(`Assessment failed: ${result.reason}`)
+              console.error('[Azure] Assessment recognition failed:', result.reason)
+              assessmentRecognizer.close()
+              reject(error)
+            }
+          } catch (error) {
+            console.error('[Azure] Error processing assessment result:', error)
+            assessmentRecognizer.close()
+            reject(error)
+          }
+        },
+        (error) => {
+          console.error('[Azure] Assessment recognition error:', error)
+          assessmentRecognizer.close()
+          reject(error)
+        }
+      )
+    })
   }
 
   public stop(): void {

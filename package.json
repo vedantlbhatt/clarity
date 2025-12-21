@@ -6,7 +6,8 @@
     "dev": "tsx server.ts",
     "build": "next build",
     "start": "NODE_ENV=production tsx server.ts",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:pronunciation": "tsx test_pronunciation.ts"
   },
   "dependencies": {
     "@deepgram/sdk": "^4.11.3",

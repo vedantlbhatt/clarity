@@ -95,8 +95,6 @@ app.prepare().then(() => {
       baseUrl = `${protocol}://${host}`
     }
     
-    const referenceText = 'The quick brown fox jumps over the lazy dog. She sells seashells by the seashore. Peter Piper picked a peck of pickled peppers. How much wood would a woodchuck chuck? Unique New York. Red leather, yellow leather. Toy boat. Irish wristwatch.' // Default reference text - you can make this configurable
-
     // Send connection acknowledgment to Twilio
     ws.send(JSON.stringify({ event: 'connected' }))
 
@@ -201,11 +199,11 @@ app.prepare().then(() => {
             // Don't fail the whole call if Deepgram fails
           }
           
-          // Initialize Azure Speech Recognizer
+          // Initialize Azure Speech Recognizer (unscripted mode - no reference text)
           try {
             
             recognizer = new AzureSpeechRecognizer({
-              referenceText,
+              // No referenceText - using unscripted mode
               onResult: async (result, text) => {
                 console.log('[Pronunciation] Result received:', {
                   text,
@@ -230,11 +228,10 @@ app.prepare().then(() => {
                   const filename = `pronunciation_${Date.now()}.txt`
                   const filepath = join(resultsDir, filename)
                   
-                  let content = `Pronunciation Assessment Result\n`
+                  let content = `Pronunciation Assessment Result (Unscripted Mode)\n`
                   content += `==============================\n`
                   content += `Timestamp: ${timestamp}\n`
                   content += `Stream SID: ${streamSid || 'N/A'}\n`
-                  content += `Reference Text: ${referenceText}\n`
                   content += `Recognized Text: "${text}"\n\n`
                   content += `Scores:\n`
                   content += `  Accuracy: ${result.accuracyScore}%\n`
@@ -271,7 +268,7 @@ app.prepare().then(() => {
             })
             
             recognizer.start()
-            console.log('[Azure] Recognizer started with reference text:', referenceText)
+            console.log('[Azure] Recognizer started in unscripted mode (no reference text)')
           } catch (error: any) {
             console.error('[Azure] Failed to initialize:', error)
             console.error('[Azure] Error details:', error?.message, error?.stack)
@@ -372,8 +369,10 @@ app.prepare().then(() => {
             transcriber = null
           }
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error('[Media Stream] Error parsing message:', error)
+        console.error('[Media Stream] Error details:', error?.message, error?.stack)
+        // Don't crash - just log the error
       }
     })
 
