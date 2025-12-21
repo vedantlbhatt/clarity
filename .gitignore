@@ -60,3 +60,4 @@ ENV/
 .env.test.local
 .env.production.local
 
+test_audio.wav

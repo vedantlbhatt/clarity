@@ -18,7 +18,7 @@ export interface PronunciationAssessmentResult {
 }
 
 export interface AzureSpeechRecognizerConfig {
-  referenceText: string
+  referenceText?: string // Optional: if not provided, uses unscripted mode
   onResult?: (result: PronunciationAssessmentResult, text: string) => void
   onError?: (error: Error) => void
 }
@@ -56,19 +56,37 @@ export class AzureSpeechRecognizer {
     console.log('[Azure] Audio format configured: 8kHz, 16-bit, mono PCM')
 
     // Create pronunciation assessment config
+    // For unscripted mode, use empty string as reference text
+    const referenceText = config.referenceText || ""
+    const isUnscripted = !referenceText
+    
+    // Use EXACTLY the same config that worked in scripted mode
+    // Only difference: empty string for reference text, miscue detection disabled
     this.pronunciationConfig = new sdk.PronunciationAssessmentConfig(
-      config.referenceText,
+      referenceText,
       sdk.PronunciationAssessmentGradingSystem.HundredMark,
       sdk.PronunciationAssessmentGranularity.Phoneme,
-      true // enable miscue detection
+      !isUnscripted // miscue detection: true for scripted, false for unscripted
     )
     this.pronunciationConfig.enableProsodyAssessment = true
+    
+    if (isUnscripted) {
+      console.log('[Azure] Using unscripted mode (no reference text)')
+    } else {
+      console.log('[Azure] Using scripted mode with reference text')
+    }
 
     // Create recognizer
     this.recognizer = new sdk.SpeechRecognizer(this.speechConfig, this.audioConfig)
 
-    // Apply pronunciation assessment
-    this.pronunciationConfig.applyTo(this.recognizer)
+    // Apply pronunciation assessment - CRITICAL: must be applied before starting recognition
+    try {
+      this.pronunciationConfig.applyTo(this.recognizer)
+      console.log('[Azure] Pronunciation assessment config applied successfully')
+    } catch (error: any) {
+      console.error('[Azure] Failed to apply pronunciation assessment config:', error?.message || error)
+      throw new Error(`Failed to configure pronunciation assessment: ${error?.message || error}`)
+    }
 
     // Set up event handlers
     this.setupEventHandlers()
@@ -97,7 +115,31 @@ export class AzureSpeechRecognizer {
         }
         
         try {
-          const pronunciationResult = sdk.PronunciationAssessmentResult.fromResult(e.result)
+          // Check if pronunciation assessment result is available
+          let pronunciationResult: any
+          try {
+            pronunciationResult = sdk.PronunciationAssessmentResult.fromResult(e.result)
+          } catch (parseError: any) {
+            console.error('[Azure] Failed to parse pronunciation result:', parseError)
+            console.error('[Azure] Result reason:', e.result.reason)
+            console.error('[Azure] Result text:', e.result.text)
+            // Try to get raw JSON if available
+            const jsonResult = (e.result as any).properties?.getProperty?.(sdk.PropertyId.SpeechServiceResponse_JsonResult)
+            if (jsonResult) {
+              console.log('[Azure] Raw JSON result:', jsonResult)
+            }
+            return
+          }
+          
+          // Log raw result for debugging
+          console.log('[Azure] Raw pronunciation result:', {
+            hasDetailResult: !!pronunciationResult.detailResult,
+            accuracyScore: pronunciationResult.accuracyScore,
+            pronunciationScore: pronunciationResult.pronunciationScore,
+            completenessScore: pronunciationResult.completenessScore,
+            fluencyScore: pronunciationResult.fluencyScore,
+            prosodyScore: pronunciationResult.prosodyScore,
+          })
           
           const result: PronunciationAssessmentResult = {
             accuracyScore: pronunciationResult.accuracyScore,
@@ -107,8 +149,8 @@ export class AzureSpeechRecognizer {
             prosodyScore: pronunciationResult.prosodyScore,
             words: pronunciationResult.detailResult?.Words?.map((word: any) => ({
               word: word.Word,
-              accuracyScore: word.PronunciationAssessment.AccuracyScore,
-              errorType: word.PronunciationAssessment.ErrorType,
+              accuracyScore: word.PronunciationAssessment?.AccuracyScore || 0,
+              errorType: word.PronunciationAssessment?.ErrorType || 'None',
               phonemes: word.Phonemes?.map((phoneme: any) => ({
                 phoneme: phoneme.Phoneme || phoneme.Phonemes || 'N/A',
                 accuracyScore: phoneme.PronunciationAssessment?.AccuracyScore || 0,
@@ -132,6 +174,8 @@ export class AzureSpeechRecognizer {
                 console.log(`       Phonemes: ${word.phonemes.map(p => `${p.phoneme}(${p.accuracyScore}%)`).join(', ')}`)
               }
             })
+          } else {
+            console.warn('[Azure] No word-level details available - this may indicate an issue with assessment')
           }
 
           if (this.config.onResult) {
