@@ -91,9 +91,11 @@ export class AzureSpeechRecognizer {
         
         // Log everything, even if it's just punctuation, so we can see what Azure is hearing
         if (!text || text === '.' || text.length < 2) {
-          console.log(`[Azure] Note: Only got "${text}" - Azure may not be hearing clear speech`)
+          console.log(`[Azure] Note: Only got "${text}" (length: ${text.length}) - Azure may not be hearing clear speech, skipping Step 2`)
           return
         }
+        
+        console.log(`[Azure] Step 1 text passed validation check, proceeding to Step 2 with referenceText: "${text}"`)
         
         // Prevent concurrent processing
         if (this.isProcessing) {
@@ -176,7 +178,10 @@ export class AzureSpeechRecognizer {
    * This uses the accurate transcript from STT for better pronunciation assessment
    */
   private async doScriptedPronunciationAssessment(referenceText: string): Promise<void> {
-    console.log(`[Azure] Step 2 - Starting scripted pronunciation assessment with transcript: "${referenceText}"`)
+    console.log(`[Azure] Step 2 - Starting scripted pronunciation assessment`)
+    console.log(`[Azure] Reference text being used: "${referenceText}"`)
+    console.log(`[Azure] Reference text length: ${referenceText.length}`)
+    console.log(`[Azure] Reference text char codes: ${Array.from(referenceText).map(c => c.charCodeAt(0)).join(', ')}`)
     
     // Create a new recognizer for pronunciation assessment
     // Note: We'll use the buffered audio if available, otherwise this is a limitation

@@ -96,7 +96,7 @@ export class VoiceActivityDetector {
     const smoothedEnergy = this.getSmoothedEnergy(energy)
 
     if (this.config.debug) {
-      console.log(`[VAD] Energy: ${smoothedEnergy.toFixed(0)}, State: ${this.state}`)
+      //console.log(`[VAD] Energy: ${smoothedEnergy.toFixed(0)}, State: ${this.state}`)
     }
 
     this.updateState(smoothedEnergy)

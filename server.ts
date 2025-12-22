@@ -11,10 +11,13 @@ import { writeFile, mkdir, appendFile, access } from 'fs/promises'
 import { join } from 'path'
 import { AzureSpeechRecognizer } from './src/lib/external/azureSpeech'
 import { DeepgramTranscriber } from './src/lib/external/deepgram'
-import { convertTwilioAudioToPcm } from './src/lib/utils/audioConversion'
+import { convertTwilioAudioToPcm, convertPcmToMulaw, extractPcmFromWav, downsample16kTo8k } from './src/lib/utils/audioConversion'
 import { CallSession } from './src/lib/session/callSession'
 import { handleFeedbackAt30Seconds } from './src/lib/services/feedbackHandler'
 import { VoiceActivityDetector } from './src/lib/utils/vad'
+import { generateConversationResponse } from './src/lib/session/geminiConversation'
+import { textToSpeech, textToSpeechFile } from './src/lib/external/azureTTS'
+import twilio from 'twilio'
 
 const dev = process.env.NODE_ENV !== 'production'
 const hostname = 'localhost'
@@ -90,6 +93,105 @@ app.prepare().then(() => {
     let baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
     let vad: VoiceActivityDetector | null = null
     let trackDirection: 'inbound' | 'outbound' = 'inbound' // Default to inbound (user's voice)
+    let isAISpeaking = false // Flag to prevent processing user speech while AI is talking
+    
+    /**
+     * Get Twilio client
+     */
+    const getTwilioClient = () => {
+      const accountSid = process.env.TWILIO_ACCOUNT_SID
+      const authToken = process.env.TWILIO_AUTH_TOKEN
+
+      if (!accountSid || !authToken) {
+        throw new Error('Twilio credentials not configured')
+      }
+
+      return twilio(accountSid, authToken)
+    }
+
+    /**
+     * Convert text to speech and play back to user via Twilio REST API
+     * Uses the same approach as feedback handler: save to file, serve via HTTP, play via TwiML
+     * @param text - Text to speak
+     */
+    const speakToUser = async (text: string): Promise<void> => {
+      if (isAISpeaking) {
+        console.log('[TTS Playback] AI is already speaking, skipping')
+        return
+      }
+
+      if (!session?.getData().callSid) {
+        console.warn('[TTS Playback] No callSid available, cannot play audio')
+        return
+      }
+
+      try {
+        isAISpeaking = true
+        console.log('[TTS Playback] Converting to speech:', text.substring(0, 50) + '...')
+        
+        // Save TTS to file (same approach as feedback handler)
+        const ttsDir = join(process.cwd(), 'results', 'tts')
+        await mkdir(ttsDir, { recursive: true })
+        
+        const audioFilename = `conversation_${session.getData().streamSid}_${Date.now()}.wav`
+        const audioPath = join(ttsDir, audioFilename)
+        
+        // Generate TTS and save to file
+        await textToSpeechFile(text, audioPath, {
+          voice: 'en-US-AriaNeural', // Friendly female voice
+          rate: '+0%',
+        })
+        
+        console.log('[TTS Playback] TTS audio saved to:', audioPath)
+        
+        // Get audio URL (same as feedback handler)
+        const audioUrl = `${baseUrl}/api/tts-audio/${audioFilename}`
+        console.log('[TTS Playback] Audio URL:', audioUrl)
+        
+        // Play audio via Twilio REST API (same approach as feedback handler)
+        const client = getTwilioClient()
+        const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Play>${audioUrl}</Play>
+</Response>`
+
+        const callSid = session.getData().callSid
+        if (!callSid) {
+          throw new Error('No callSid available')
+        }
+        
+        await client.calls(callSid).update({
+          twiml: twiml,
+        })
+
+        console.log('[TTS Playback] Updated call with audio playback')
+        
+        // Reset flag after estimated duration
+        const wordCount = text.split(/\s+/).length
+        const estimatedDuration = Math.max(2000, (wordCount / 10) * 1000) // Rough estimate
+        setTimeout(() => {
+          isAISpeaking = false
+          console.log('[TTS Playback] AI finished speaking')
+        }, estimatedDuration)
+      } catch (error: any) {
+        console.error('[TTS Playback] Error:', error)
+        isAISpeaking = false
+        // Fallback: use Twilio Say
+        try {
+          const client = getTwilioClient()
+          const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>${text}</Say>
+</Response>`
+          await client.calls(session.getData().callSid!).update({
+            twiml: twiml,
+          })
+          console.log('[TTS Playback] Used Twilio Say as fallback')
+        } catch (fallbackError) {
+          console.error('[TTS Playback] Fallback also failed:', fallbackError)
+        }
+      }
+    }
     
     // Try to get base URL from request headers
     const host = req.headers.host
@@ -164,8 +266,88 @@ app.prepare().then(() => {
               onSpeechStart: () => {
                 console.log('[VAD] 🎤 User started speaking')
               },
-              onSpeechEnd: () => {
+              onSpeechEnd: async () => {
                 console.log('[VAD] 🔇 User finished speaking')
+                
+                if (!session) {
+                  console.warn('[Conversation] No session available, skipping conversation turn')
+                  return
+                }
+
+                // Wait a brief moment for Deepgram to finalize transcript
+                // Deepgram might still be processing, so we give it a small delay
+                await new Promise(resolve => setTimeout(resolve, 300))
+                
+                // Get the current user transcript
+                const currentTranscript = session.getLatestFinalTranscript()
+                
+                if (!currentTranscript || currentTranscript.trim().length === 0) {
+                  console.log('[Conversation] No valid transcript found, skipping conversation turn')
+                  console.log('[Conversation] Available transcripts:', session.getData().transcripts.length)
+                  return
+                }
+
+                const trimmedTranscript = currentTranscript.trim()
+                
+                // Skip if transcript is too short (likely noise or false positive)
+                if (trimmedTranscript.length < 2) {
+                  console.log('[Conversation] Transcript too short, skipping:', trimmedTranscript)
+                  return
+                }
+
+                console.log('[Conversation] Processing user message:', trimmedTranscript)
+                
+                // Add user message to conversation history
+                session.addUserMessage(trimmedTranscript)
+                
+                // Get conversation context (past + current)
+                const context = session.getConversationContext()
+                const turnCount = session.getConversationTurnCount()
+                
+                console.log('[Conversation] Context prepared (Turn #' + turnCount + '):')
+                console.log('  Past messages:', context.past.length)
+                if (context.past.length > 0) {
+                  context.past.forEach((msg, idx) => {
+                    const roleLabel = msg.role === 'user' ? '👤 User' : '🤖 AI'
+                    console.log(`    ${idx + 1}. ${roleLabel}: "${msg.text.substring(0, 50)}${msg.text.length > 50 ? '...' : ''}"`)
+                  })
+                } else {
+                  console.log('    (No previous conversation history)')
+                }
+                console.log('  Current message:', context.curr)
+                
+                // Get Gemini-formatted history for API call
+                const geminiHistory = session.getGeminiFormatHistory()
+                console.log('[Conversation] Ready for Gemini API call')
+                console.log(`[Conversation] Total messages in history: ${geminiHistory.length}`)
+                
+                // Call Gemini API with conversation context
+                try {
+                  const geminiResponse = await generateConversationResponse(
+                    context.past.map(msg => ({
+                      role: msg.role === 'assistant' ? 'model' : 'user',
+                      parts: [{ text: msg.text }]
+                    })),
+                    context.curr || '',
+                    'You are a friendly English pronunciation tutor. Have natural, helpful conversations with students. Keep responses concise (1-2 sentences) for phone conversations.'
+                  )
+
+                  if (geminiResponse) {
+                    session.addAssistantMessage(geminiResponse)
+                    console.log('[Conversation] AI response:', geminiResponse)
+                    // Convert to TTS and play back
+                    await speakToUser(geminiResponse)
+                  }
+                } catch (error: any) {
+                  console.error('[Conversation] Error calling Gemini:', error)
+                  // Optionally add a fallback message
+                  const fallbackMessage = "I'm sorry, I didn't catch that. Could you repeat?"
+                  session.addAssistantMessage(fallbackMessage)
+                  console.log('[Conversation] Using fallback message:', fallbackMessage)
+                  // Convert fallback to TTS and play back
+                  await speakToUser(fallbackMessage)
+                }
+
               },
             }
           )

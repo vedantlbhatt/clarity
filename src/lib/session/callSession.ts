@@ -26,6 +26,11 @@ export interface CallSessionData {
     text: string
     timestamp: number
   }>
+  conversationHistory: Array<{
+    role: 'user' | 'assistant'
+    text: string
+    timestamp: number
+  }>
 }
 
 export class CallSession {
@@ -42,6 +47,7 @@ export class CallSession {
       transcripts: [],
       fillerWords: [],
       azureResults: [],
+      conversationHistory: [],
     }
   }
 
@@ -139,6 +145,118 @@ export class CallSession {
    */
   getFillerWordCount(): number {
     return this.data.fillerWords.length
+  }
+
+  /**
+   * Add a user message to conversation history
+   */
+  addUserMessage(text: string): void {
+    this.data.conversationHistory.push({
+      role: 'user',
+      text: text.trim(),
+      timestamp: Date.now(),
+    })
+  }
+
+  /**
+   * Add an assistant (AI) message to conversation history
+   */
+  addAssistantMessage(text: string): void {
+    this.data.conversationHistory.push({
+      role: 'assistant',
+      text: text.trim(),
+      timestamp: Date.now(),
+    })
+  }
+
+  /**
+   * Get conversation context for Gemini
+   * Returns: { past: conversation history array, curr: current user message }
+   */
+  getConversationContext(): {
+    past: Array<{ role: 'user' | 'assistant'; text: string }>
+    curr: string | null
+  } {
+    const history = this.data.conversationHistory
+    
+    if (history.length === 0) {
+      return { past: [], curr: null }
+    }
+
+    // Get the most recent user message (current)
+    let curr: string | null = null
+    let past: Array<{ role: 'user' | 'assistant'; text: string }> = []
+
+    // Find the last user message (should be the most recent if user just finished speaking)
+    for (let i = history.length - 1; i >= 0; i--) {
+      if (history[i].role === 'user') {
+        curr = history[i].text
+        // Past is everything before this current message
+        past = history.slice(0, i).map(msg => ({
+          role: msg.role,
+          text: msg.text,
+        }))
+        break
+      }
+    }
+
+    // If no user message found, return all as past
+    if (curr === null) {
+      past = history.map(msg => ({
+        role: msg.role,
+        text: msg.text,
+      }))
+    }
+
+    return { past, curr }
+  }
+
+  /**
+   * Get the most recent final transcript from Deepgram
+   * This is used to get the current user message when speech ends
+   */
+  getLatestFinalTranscript(): string | null {
+    const finalTranscripts = this.data.transcripts
+      .filter(t => t.isFinal)
+      .sort((a, b) => b.timestamp - a.timestamp) // Most recent first
+    
+    if (finalTranscripts.length === 0) {
+      return null
+    }
+
+    // Get the most recent final transcript
+    // If there are multiple final transcripts since last user message, combine them
+    const lastUserMessageTime = this.data.conversationHistory
+      .filter(msg => msg.role === 'user')
+      .slice(-1)[0]?.timestamp || 0
+
+    // Get all final transcripts after the last user message
+    const recentTranscripts = finalTranscripts
+      .filter(t => t.timestamp > lastUserMessageTime)
+      .map(t => t.text)
+      .join(' ')
+      .trim()
+
+    return recentTranscripts || finalTranscripts[0].text
+  }
+
+  /**
+   * Get conversation history formatted for Gemini API
+   * Returns array of messages in format: [{ role: 'user'|'model', parts: [{ text: '...' }] }]
+   * Note: Gemini uses 'model' instead of 'assistant'
+   */
+  getGeminiFormatHistory(): Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> {
+    return this.data.conversationHistory.map(msg => ({
+      role: msg.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: msg.text }],
+    }))
+  }
+
+  /**
+   * Get conversation turn count (number of user messages)
+   */
+  getConversationTurnCount(): number {
+    return this.data.conversationHistory.filter(msg => msg.role === 'user').length
   }
 
   /**
