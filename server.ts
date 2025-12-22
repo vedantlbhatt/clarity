@@ -7,7 +7,7 @@ import { createServer } from 'http'
 import { parse } from 'url'
 import next from 'next'
 import { WebSocketServer } from 'ws'
-import { writeFile, mkdir, appendFile } from 'fs/promises'
+import { writeFile, mkdir, appendFile, access } from 'fs/promises'
 import { join } from 'path'
 import { AzureSpeechRecognizer } from './src/lib/external/azureSpeech'
 import { DeepgramTranscriber } from './src/lib/external/deepgram'
@@ -219,19 +219,35 @@ app.prepare().then(() => {
                   session.addAzureResult(result, text)
                 }
                 
-                // Save results to file
+                // Save results to file (append to single file per call)
                 try {
                   const resultsDir = join(process.cwd(), 'results')
                   await mkdir(resultsDir, { recursive: true })
                   
-                  const timestamp = new Date().toISOString()
-                  const filename = `pronunciation_${Date.now()}.txt`
+                  // Use streamSid to create one file per call
+                  const filename = `pronunciation_${streamSid || 'unknown'}.txt`
                   const filepath = join(resultsDir, filename)
                   
-                  let content = `Pronunciation Assessment Result (Unscripted Mode)\n`
-                  content += `==============================\n`
+                  // Check if file exists to determine if we need to write header
+                  const fileExists = await access(filepath).then(() => true).catch(() => false)
+                  
+                  let content = ''
+                  
+                  // Write header only if this is the first result for this call
+                  if (!fileExists) {
+                    const callStartTime = new Date().toISOString()
+                    content += `Pronunciation Assessment Results (Two-Step Scripted Mode)\n`
+                    content += `========================================================\n`
+                    content += `Call Start Time: ${callStartTime}\n`
+                    content += `Stream SID: ${streamSid || 'N/A'}\n`
+                    content += `Call SID: ${session?.getData().callSid || 'N/A'}\n`
+                    content += `\n${'='.repeat(60)}\n\n`
+                  }
+                  
+                  // Append this result
+                  const timestamp = new Date().toISOString()
+                  content += `Result #${(session?.getData().azureResults.length || 0)}\n`
                   content += `Timestamp: ${timestamp}\n`
-                  content += `Stream SID: ${streamSid || 'N/A'}\n`
                   content += `Recognized Text: "${text}"\n\n`
                   content += `Scores:\n`
                   content += `  Accuracy: ${result.accuracyScore}%\n`
@@ -248,12 +264,14 @@ app.prepare().then(() => {
                         content += `     Phonemes: ${word.phonemes.map(p => `${p.phoneme}(${p.accuracyScore}%)`).join(', ')}\n`
                       }
                     })
+                    content += `\n`
                   }
                   
-                  content += `\n${'='.repeat(30)}\n\n`
+                  content += `${'-'.repeat(60)}\n\n`
                   
-                  await writeFile(filepath, content, 'utf-8')
-                  console.log(`[Results] Saved to ${filepath}`)
+                  // Append to file (create if doesn't exist)
+                  await appendFile(filepath, content, 'utf-8')
+                  console.log(`[Results] Appended result to ${filepath}`)
                 } catch (error) {
                   console.error('[Results] Error saving to file:', error)
                 }
