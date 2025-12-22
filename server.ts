@@ -14,6 +14,7 @@ import { DeepgramTranscriber } from './src/lib/external/deepgram'
 import { convertTwilioAudioToPcm } from './src/lib/utils/audioConversion'
 import { CallSession } from './src/lib/session/callSession'
 import { handleFeedbackAt30Seconds } from './src/lib/services/feedbackHandler'
+import { VoiceActivityDetector } from './src/lib/utils/vad'
 
 const dev = process.env.NODE_ENV !== 'production'
 const hostname = 'localhost'
@@ -87,6 +88,8 @@ app.prepare().then(() => {
     let session: CallSession | null = null
     let feedbackTriggered = false
     let baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+    let vad: VoiceActivityDetector | null = null
+    let trackDirection: 'inbound' | 'outbound' = 'inbound' // Default to inbound (user's voice)
     
     // Try to get base URL from request headers
     const host = req.headers.host
@@ -114,6 +117,15 @@ app.prepare().then(() => {
             mediaFormat: message.start?.mediaFormat,
           })
           
+          // Determine track direction from start event if available
+          // If TwiML specified track="inbound", all media will be inbound
+          // If track="both", we'll need to check message.media.track for each chunk
+          if (message.start?.tracks) {
+            // If tracks array exists, check what's available
+            // For now, default to inbound since that's what we're using
+            trackDirection = 'inbound'
+          }
+          
           // Check Azure credentials before initializing
           if (!process.env.AZURE_SPEECH_KEY || !process.env.AZURE_SPEECH_REGION) {
             console.error('[Azure] Missing credentials: AZURE_SPEECH_KEY or AZURE_SPEECH_REGION not set')
@@ -138,6 +150,26 @@ app.prepare().then(() => {
             final: callSid,
           })
           console.log('[Session] Created session for stream:', streamSid, 'call:', callSid)
+          
+          // Initialize Voice Activity Detector
+          vad = new VoiceActivityDetector(
+            {
+              speechThreshold: 800,
+              silenceThreshold: 200,
+              silenceDurationMs: 800,
+              speechStartFrames: 2,
+              debug: true, // Enable debug logging for now
+            },
+            {
+              onSpeechStart: () => {
+                console.log('[VAD] 🎤 User started speaking')
+              },
+              onSpeechEnd: () => {
+                console.log('[VAD] 🔇 User finished speaking')
+              },
+            }
+          )
+          console.log('[VAD] Voice Activity Detector initialized')
           
           // Start timer that checks for 30 seconds
           session.startTimer((elapsedSeconds) => {
@@ -313,6 +345,17 @@ app.prepare().then(() => {
               // Convert μ-law to PCM
               const pcmBuffer = convertTwilioAudioToPcm(message.media.payload)
               
+              // Check if this media event specifies a track (if track="both" in TwiML)
+              const mediaTrack = message.media?.track
+              const currentTrack = mediaTrack === 'inbound' || mediaTrack === 'outbound' 
+                ? mediaTrack 
+                : trackDirection // Use default from start event
+              
+              // Process audio through VAD (only for inbound/user audio)
+              if (vad && currentTrack === 'inbound') {
+                vad.processAudio(pcmBuffer, currentTrack)
+              }
+              
               // Store audio chunk in session
               if (session) {
                 session.addAudioChunk(pcmBuffer)
@@ -386,6 +429,10 @@ app.prepare().then(() => {
             transcriber.close()
             transcriber = null
           }
+          if (vad) {
+            vad.destroy()
+            vad = null
+          }
         }
       } catch (error: any) {
         console.error('[Media Stream] Error parsing message:', error)
@@ -410,6 +457,10 @@ app.prepare().then(() => {
         transcriber.close()
         transcriber = null
       }
+      if (vad) {
+        vad.destroy()
+        vad = null
+      }
     })
 
     ws.on('error', (error) => {
@@ -427,6 +478,10 @@ app.prepare().then(() => {
       if (transcriber) {
         transcriber.close()
         transcriber = null
+      }
+      if (vad) {
+        vad.destroy()
+        vad = null
       }
     })
   })
