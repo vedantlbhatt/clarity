@@ -114,9 +114,19 @@ app.prepare().then(() => {
      * Uses the same approach as feedback handler: save to file, serve via HTTP, play via TwiML
      * @param text - Text to speak
      */
+    /**
+     * Stream Azure TTS audio directly through Media Stream WebSocket
+     * This avoids using update() which stops the stream
+     */
     const speakToUser = async (text: string): Promise<void> => {
       if (isAISpeaking) {
         console.log('[TTS Playback] AI is already speaking, skipping')
+        return
+      }
+
+      // Check if WebSocket is still open
+      if (ws.readyState !== ws.OPEN) {
+        console.warn('[TTS Playback] WebSocket is not open (state:', ws.readyState, '), cannot stream audio')
         return
       }
 
@@ -125,71 +135,97 @@ app.prepare().then(() => {
         return
       }
 
+      const ttsStreamSid = (ws as any).streamSid
+      if (!ttsStreamSid) {
+        console.warn('[TTS Playback] No streamSid available, cannot stream audio')
+        return
+      }
+
       try {
         isAISpeaking = true
         console.log('[TTS Playback] Converting to speech:', text.substring(0, 50) + '...')
         
-        // Save TTS to file (same approach as feedback handler)
-        const ttsDir = join(process.cwd(), 'results', 'tts')
-        await mkdir(ttsDir, { recursive: true })
-        
-        const audioFilename = `conversation_${session.getData().streamSid}_${Date.now()}.wav`
-        const audioPath = join(ttsDir, audioFilename)
-        
-        // Generate TTS and save to file
-        await textToSpeechFile(text, audioPath, {
-          voice: 'en-US-AriaNeural', // Friendly female voice
+        // Generate TTS using Azure (in-memory, don't save to file)
+        const ttsBuffer = await textToSpeech(text, {
+          voice: 'en-US-AriaNeural',
           rate: '+0%',
         })
         
-        console.log('[TTS Playback] TTS audio saved to:', audioPath)
+        console.log('[TTS Playback] TTS generated, length:', ttsBuffer.length, 'bytes')
         
-        // Get audio URL (same as feedback handler)
-        const audioUrl = `${baseUrl}/api/tts-audio/${audioFilename}`
-        console.log('[TTS Playback] Audio URL:', audioUrl)
+        // Extract PCM from WAV (Azure returns 16kHz WAV)
+        const pcm16k = extractPcmFromWav(ttsBuffer)
+        console.log('[TTS Playback] Extracted PCM (16kHz), length:', pcm16k.length, 'bytes')
         
-        // Play audio via Twilio REST API (same approach as feedback handler)
-        const client = getTwilioClient()
-        const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Play>${audioUrl}</Play>
-</Response>`
-
-        const callSid = session.getData().callSid
-        if (!callSid) {
-          throw new Error('No callSid available')
+        // Downsample from 16kHz to 8kHz (Twilio requires 8kHz)
+        const pcm8k = downsample16kTo8k(pcm16k)
+        console.log('[TTS Playback] Downsampled to 8kHz, length:', pcm8k.length, 'bytes')
+        
+        // Convert PCM to μ-law (Twilio Media Streams format)
+        const mulawBuffer = convertPcmToMulaw(pcm8k)
+        console.log('[TTS Playback] Converted to μ-law, length:', mulawBuffer.length, 'bytes')
+        
+        // Chunk audio into 20ms frames (160 bytes at 8kHz = 20ms)
+        const chunkSize = 160 // 20ms at 8kHz μ-law (1 byte per sample)
+        const totalChunks = Math.ceil(mulawBuffer.length / chunkSize)
+        console.log('[TTS Playback] Streaming', totalChunks, 'chunks of', chunkSize, 'bytes each')
+        
+        // Stream chunks with 20ms delay between each
+        for (let i = 0; i < totalChunks; i++) {
+          // Check if WebSocket is still open before sending each chunk
+          if (ws.readyState !== ws.OPEN) {
+            console.warn('[TTS Playback] WebSocket closed during streaming, stopping at chunk', i, 'of', totalChunks)
+            break
+          }
+          
+          const start = i * chunkSize
+          const end = Math.min(start + chunkSize, mulawBuffer.length)
+          const chunk = mulawBuffer.slice(start, end)
+          
+          // Convert to base64
+          const base64Chunk = chunk.toString('base64')
+          
+          // Send as outbound media event
+          // CRITICAL: Use call-gpt's simple format - just streamSid, event, and media.payload
+          // No track, sequenceNumber, chunk, or timestamp needed with <Connect><Stream>
+          const mediaMessage = {
+            streamSid: ttsStreamSid,
+            event: 'media',
+            media: {
+              payload: base64Chunk
+            }
+          }
+          
+          // Log first chunk to verify format
+          if (i === 0) {
+            console.log('[TTS Playback] First outbound message format (call-gpt style):', JSON.stringify(mediaMessage, null, 2))
+          }
+          
+          try {
+            ws.send(JSON.stringify(mediaMessage))
+          } catch (error: any) {
+            console.error('[TTS Playback] Error sending audio chunk:', error)
+            isAISpeaking = false
+            break
+          }
+          
+          // Wait 20ms before sending next chunk (real-time playback)
+          if (i < totalChunks - 1) {
+            await new Promise(resolve => setTimeout(resolve, 20))
+          }
         }
         
-        await client.calls(callSid).update({
-          twiml: twiml,
-        })
-
-        console.log('[TTS Playback] Updated call with audio playback')
+        console.log('[TTS Playback] Finished streaming audio')
         
-        // Reset flag after estimated duration
-        const wordCount = text.split(/\s+/).length
-        const estimatedDuration = Math.max(2000, (wordCount / 10) * 1000) // Rough estimate
+        // Reset flag after a brief delay
         setTimeout(() => {
           isAISpeaking = false
           console.log('[TTS Playback] AI finished speaking')
-        }, estimatedDuration)
+        }, 100)
+        
       } catch (error: any) {
         console.error('[TTS Playback] Error:', error)
         isAISpeaking = false
-        // Fallback: use Twilio Say
-        try {
-          const client = getTwilioClient()
-          const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say>${text}</Say>
-</Response>`
-          await client.calls(session.getData().callSid!).update({
-            twiml: twiml,
-          })
-          console.log('[TTS Playback] Used Twilio Say as fallback')
-        } catch (fallbackError) {
-          console.error('[TTS Playback] Fallback also failed:', fallbackError)
-        }
       }
     }
     
@@ -238,10 +274,15 @@ app.prepare().then(() => {
             return
           }
           
-          // Store streamSid for use in callbacks
+          // Store streamSid for use in callbacks (CRITICAL: needed to send audio back)
           const streamSid = message.streamSid
-          // Try to get callSid from multiple sources
-          const callSid = message.start?.callSid || message.callSid || callSidFromQuery
+          // Try to get callSid from multiple sources  
+          const callSid = message.start?.callSid || message.callSid || (callSidFromQuery ? callSidFromQuery : undefined)
+          
+          // Store WebSocket reference for sending audio back (for TTS streaming)
+          const wsAny = ws as any
+          wsAny.streamSid = streamSid
+          wsAny.callSid = callSid
           
           // Create session tracker
           session = new CallSession(streamSid, callSid)
@@ -274,14 +315,32 @@ app.prepare().then(() => {
               onSpeechEnd: async () => {
                 console.log('[VAD] 🔇 User finished speaking')
                 
+                // Check if session and WebSocket are still valid
                 if (!session) {
                   console.warn('[Conversation] No session available, skipping conversation turn')
+                  return
+                }
+                
+                // Check if WebSocket is still open
+                if (ws.readyState !== ws.OPEN) {
+                  console.warn('[Conversation] WebSocket is not open (state:', ws.readyState, '), skipping conversation turn')
                   return
                 }
 
                 // Wait a brief moment for Deepgram to finalize transcript
                 // Deepgram might still be processing, so we give it a small delay
                 await new Promise(resolve => setTimeout(resolve, 300))
+                
+                // Re-check session and WebSocket after delay (stream might have stopped)
+                if (!session) {
+                  console.warn('[Conversation] Session became null during delay, skipping conversation turn')
+                  return
+                }
+                
+                if (ws.readyState !== ws.OPEN) {
+                  console.warn('[Conversation] WebSocket closed during delay, skipping conversation turn')
+                  return
+                }
                 
                 // Get the current user transcript
                 const currentTranscript = session.getLatestFinalTranscript()
@@ -337,6 +396,12 @@ app.prepare().then(() => {
                     'You are a friendly English pronunciation tutor. Have natural, helpful conversations with students. Keep responses concise (1-2 sentences) for phone conversations.'
                   )
 
+                  // Final check before using session
+                  if (!session || ws.readyState !== ws.OPEN) {
+                    console.warn('[Conversation] Session or WebSocket invalid after Gemini call, skipping TTS')
+                    return
+                  }
+
                   if (geminiResponse) {
                     session.addAssistantMessage(geminiResponse)
                     console.log('[Conversation] AI response:', geminiResponse)
@@ -345,6 +410,13 @@ app.prepare().then(() => {
                   }
                 } catch (error: any) {
                   console.error('[Conversation] Error calling Gemini:', error)
+                  
+                  // Final check before using session
+                  if (!session || ws.readyState !== ws.OPEN) {
+                    console.warn('[Conversation] Session or WebSocket invalid after error, skipping fallback')
+                    return
+                  }
+                  
                   // Optionally add a fallback message
                   const fallbackMessage = "I'm sorry, I didn't catch that. Could you repeat?"
                   session.addAssistantMessage(fallbackMessage)
@@ -517,6 +589,21 @@ app.prepare().then(() => {
         } else if (message.event === 'media') {
           // Twilio sends audio as base64-encoded μ-law
           // According to Twilio docs: message.media.payload contains base64 μ-law
+          // Log incoming media format for reference (first few only)
+          if (!(ws as any)._inboundMediaCount) {
+            (ws as any)._inboundMediaCount = 0
+          }
+          if ((ws as any)._inboundMediaCount++ < 3) {
+            console.log('[Media Stream] Incoming media format:', {
+              event: message.event,
+              hasStreamSid: !!message.streamSid,
+              hasSequenceNumber: !!message.sequenceNumber,
+              mediaTrack: message.media?.track,
+              hasPayload: !!message.media?.payload,
+              payloadLength: message.media?.payload?.length || 0
+            })
+          }
+          
           if (recognizer && message.media?.payload) {
             try {
               // Log first few media events to verify we're getting payloads
@@ -602,6 +689,20 @@ app.prepare().then(() => {
           }
         } else if (message.event === 'stop') {
           console.log('[Media Stream] Stream stopped')
+          console.log('[Media Stream] Stop event details:', JSON.stringify(message, null, 2))
+          console.log('[Media Stream] Stop event - isAISpeaking:', isAISpeaking)
+          console.log('[Media Stream] Stop event - session exists:', !!session)
+          console.log('[Media Stream] Stop event - WebSocket state:', ws.readyState)
+          
+          // Don't clean up immediately if AI is speaking - wait for it to finish
+          // This prevents the stream from closing mid-conversation
+          if (isAISpeaking) {
+            console.log('[Media Stream] AI is speaking, deferring cleanup until TTS completes')
+            // Set a flag to clean up after TTS finishes
+            // The cleanup will happen in the speakToUser function after it finishes
+            return
+          }
+          
           if (session) {
             session.stopTimer()
             session.cleanup()
