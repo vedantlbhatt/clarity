@@ -265,6 +265,11 @@ app.prepare().then(() => {
             {
               onSpeechStart: () => {
                 console.log('[VAD] 🎤 User started speaking')
+                // Clear Azure audio buffer when speech starts
+                // This ensures we only assess the current utterance, not previous ones
+                if (recognizer) {
+                  recognizer.clearAudioBuffer()
+                }
               },
               onSpeechEnd: async () => {
                 console.log('[VAD] 🔇 User finished speaking')

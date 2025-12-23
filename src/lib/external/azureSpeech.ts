@@ -114,8 +114,8 @@ export class AzureSpeechRecognizer {
           }
         } finally {
           this.isProcessing = false
-          // Clear audio buffer after processing
-          this.audioBuffer = []
+          // Don't clear buffer here - it will be cleared when next speech starts
+          // This ensures Step 2 can use the buffer even if it completes after speech ends
         }
       } else {
         console.log(`[Azure] Recognition event but not RecognizedSpeech - Reason: ${e.result.reason}`)
@@ -174,6 +174,15 @@ export class AzureSpeechRecognizer {
   }
 
   /**
+   * Clear the audio buffer - should be called when user starts speaking
+   * to ensure we only assess the current utterance, not previous ones
+   */
+  public clearAudioBuffer(): void {
+    this.audioBuffer = []
+    console.log('[Azure] Audio buffer cleared')
+  }
+
+  /**
    * Step 2: Do scripted pronunciation assessment using STT transcript
    * This uses the accurate transcript from STT for better pronunciation assessment
    */
@@ -204,15 +213,19 @@ export class AzureSpeechRecognizer {
     console.log('[Azure] Scripted pronunciation assessment config applied')
     
     // Replay buffered audio for assessment
-    if (this.audioBuffer.length > 0) {
-      const totalAudio = Buffer.concat(this.audioBuffer)
+    // Make a copy of the buffer to avoid race conditions
+    const audioBufferCopy = [...this.audioBuffer]
+    
+    if (audioBufferCopy.length > 0) {
+      const totalAudio = Buffer.concat(audioBufferCopy)
       const arrayBuffer = totalAudio.buffer.slice(
         totalAudio.byteOffset,
         totalAudio.byteOffset + totalAudio.byteLength
       ) as ArrayBuffer
       assessmentPushStream.write(arrayBuffer)
       assessmentPushStream.close()
-      console.log(`[Azure] Replayed ${this.audioBuffer.length} audio chunks (${totalAudio.length} bytes) for assessment`)
+      console.log(`[Azure] Replayed ${audioBufferCopy.length} audio chunks (${totalAudio.length} bytes) for assessment`)
+      console.log(`[Azure] Audio duration estimate: ~${Math.round(totalAudio.length / 160)}ms (at 8kHz, 16-bit mono)`)
     } else {
       console.warn('[Azure] No buffered audio available - assessment may be incomplete')
       assessmentPushStream.close()
@@ -244,7 +257,21 @@ export class AzureSpeechRecognizer {
               }
               
               console.log('[Azure] Step 2 - Pronunciation Assessment Result:')
-              console.log(`  Text: "${result.text}"`)
+              console.log(`  Reference text: "${referenceText}"`)
+              console.log(`  Recognized text: "${result.text}"`)
+              
+              // Warn if Step 2 recognized different text than Step 1
+              if (result.text.trim() !== referenceText.trim() && result.text.trim() !== '.' && result.text.trim().length > 0) {
+                console.warn(`[Azure] WARNING: Step 2 recognized "${result.text}" but reference was "${referenceText}"`)
+              }
+              
+              // If Step 2 only recognized ".", the audio buffer might be wrong
+              if (result.text.trim() === '.' && referenceText.trim() !== '.') {
+                console.error(`[Azure] ERROR: Step 2 only recognized "." but reference was "${referenceText}"`)
+                console.error(`[Azure] This suggests the audio buffer contains wrong audio (silence or previous utterance)`)
+                console.error(`[Azure] Audio buffer had ${audioBufferCopy.length} chunks`)
+              }
+              
               console.log(`  Accuracy: ${assessmentResult.accuracyScore}%`)
               console.log(`  Pronunciation: ${assessmentResult.pronunciationScore}%`)
               console.log(`  Completeness: ${assessmentResult.completenessScore}%`)
