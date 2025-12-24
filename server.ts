@@ -165,54 +165,36 @@ app.prepare().then(() => {
         const mulawBuffer = convertPcmToMulaw(pcm8k)
         console.log('[TTS Playback] Converted to μ-law, length:', mulawBuffer.length, 'bytes')
         
-        // Chunk audio into 20ms frames (160 bytes at 8kHz = 20ms)
-        const chunkSize = 160 // 20ms at 8kHz μ-law (1 byte per sample)
-        const totalChunks = Math.ceil(mulawBuffer.length / chunkSize)
-        console.log('[TTS Playback] Streaming', totalChunks, 'chunks of', chunkSize, 'bytes each')
+        // Convert entire audio to base64 (call-gpt sends entire payload at once, not chunked)
+        const base64Audio = mulawBuffer.toString('base64')
+        console.log('[TTS Playback] Base64 audio length:', base64Audio.length, 'chars')
         
-        // Stream chunks with 20ms delay between each
-        for (let i = 0; i < totalChunks; i++) {
-          // Check if WebSocket is still open before sending each chunk
-          if (ws.readyState !== ws.OPEN) {
-            console.warn('[TTS Playback] WebSocket closed during streaming, stopping at chunk', i, 'of', totalChunks)
-            break
+        // Check if WebSocket is still open
+        if (ws.readyState !== ws.OPEN) {
+          console.warn('[TTS Playback] WebSocket is not open, cannot send audio')
+          isAISpeaking = false
+          return
+        }
+        
+        // Send entire audio payload in one message (call-gpt approach)
+        // This avoids glitchy/staticy sound from small chunks and timing issues
+        const mediaMessage = {
+          streamSid: ttsStreamSid,
+          event: 'media',
+          media: {
+            payload: base64Audio
           }
-          
-          const start = i * chunkSize
-          const end = Math.min(start + chunkSize, mulawBuffer.length)
-          const chunk = mulawBuffer.slice(start, end)
-          
-          // Convert to base64
-          const base64Chunk = chunk.toString('base64')
-          
-          // Send as outbound media event
-          // CRITICAL: Use call-gpt's simple format - just streamSid, event, and media.payload
-          // No track, sequenceNumber, chunk, or timestamp needed with <Connect><Stream>
-          const mediaMessage = {
-            streamSid: ttsStreamSid,
-            event: 'media',
-            media: {
-              payload: base64Chunk
-            }
-          }
-          
-          // Log first chunk to verify format
-          if (i === 0) {
-            console.log('[TTS Playback] First outbound message format (call-gpt style):', JSON.stringify(mediaMessage, null, 2))
-          }
-          
-          try {
-            ws.send(JSON.stringify(mediaMessage))
-          } catch (error: any) {
-            console.error('[TTS Playback] Error sending audio chunk:', error)
-            isAISpeaking = false
-            break
-          }
-          
-          // Wait 20ms before sending next chunk (real-time playback)
-          if (i < totalChunks - 1) {
-            await new Promise(resolve => setTimeout(resolve, 20))
-          }
+        }
+        
+        console.log('[TTS Playback] Sending entire audio payload (call-gpt style)')
+        
+        try {
+          ws.send(JSON.stringify(mediaMessage))
+          console.log('[TTS Playback] Audio sent successfully')
+        } catch (error: any) {
+          console.error('[TTS Playback] Error sending audio:', error)
+          isAISpeaking = false
+          return
         }
         
         console.log('[TTS Playback] Finished streaming audio')
