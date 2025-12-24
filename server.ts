@@ -11,9 +11,13 @@ import { writeFile, mkdir, appendFile, access } from 'fs/promises'
 import { join } from 'path'
 import { AzureSpeechRecognizer } from './src/lib/external/azureSpeech'
 import { DeepgramTranscriber } from './src/lib/external/deepgram'
-import { convertTwilioAudioToPcm } from './src/lib/utils/audioConversion'
+import { convertTwilioAudioToPcm, convertPcmToMulaw, extractPcmFromWav, downsample16kTo8k } from './src/lib/utils/audioConversion'
 import { CallSession } from './src/lib/session/callSession'
 import { handleFeedbackAt30Seconds } from './src/lib/services/feedbackHandler'
+import { VoiceActivityDetector } from './src/lib/utils/vad'
+import { generateConversationResponse } from './src/lib/session/geminiConversation'
+import { textToSpeech, textToSpeechFile } from './src/lib/external/azureTTS'
+import twilio from 'twilio'
 
 const dev = process.env.NODE_ENV !== 'production'
 const hostname = 'localhost'
@@ -87,6 +91,125 @@ app.prepare().then(() => {
     let session: CallSession | null = null
     let feedbackTriggered = false
     let baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+    let vad: VoiceActivityDetector | null = null
+    let trackDirection: 'inbound' | 'outbound' = 'inbound' // Default to inbound (user's voice)
+    let isAISpeaking = false // Flag to prevent processing user speech while AI is talking
+    
+    /**
+     * Get Twilio client
+     */
+    const getTwilioClient = () => {
+      const accountSid = process.env.TWILIO_ACCOUNT_SID
+      const authToken = process.env.TWILIO_AUTH_TOKEN
+
+      if (!accountSid || !authToken) {
+        throw new Error('Twilio credentials not configured')
+      }
+
+      return twilio(accountSid, authToken)
+    }
+
+    /**
+     * Convert text to speech and play back to user via Twilio REST API
+     * Uses the same approach as feedback handler: save to file, serve via HTTP, play via TwiML
+     * @param text - Text to speak
+     */
+    /**
+     * Stream Azure TTS audio directly through Media Stream WebSocket
+     * This avoids using update() which stops the stream
+     */
+    const speakToUser = async (text: string): Promise<void> => {
+      if (isAISpeaking) {
+        console.log('[TTS Playback] AI is already speaking, skipping')
+        return
+      }
+
+      // Check if WebSocket is still open
+      if (ws.readyState !== ws.OPEN) {
+        console.warn('[TTS Playback] WebSocket is not open (state:', ws.readyState, '), cannot stream audio')
+        return
+      }
+
+      if (!session?.getData().callSid) {
+        console.warn('[TTS Playback] No callSid available, cannot play audio')
+        return
+      }
+
+      const ttsStreamSid = (ws as any).streamSid
+      if (!ttsStreamSid) {
+        console.warn('[TTS Playback] No streamSid available, cannot stream audio')
+        return
+      }
+
+      try {
+        isAISpeaking = true
+        console.log('[TTS Playback] Converting to speech:', text.substring(0, 50) + '...')
+        
+        // Generate TTS using Azure (in-memory, don't save to file)
+        const ttsBuffer = await textToSpeech(text, {
+          voice: 'en-US-AriaNeural',
+          rate: '+0%',
+        })
+        
+        console.log('[TTS Playback] TTS generated, length:', ttsBuffer.length, 'bytes')
+        
+        // Extract PCM from WAV (Azure returns 16kHz WAV)
+        const pcm16k = extractPcmFromWav(ttsBuffer)
+        console.log('[TTS Playback] Extracted PCM (16kHz), length:', pcm16k.length, 'bytes')
+        
+        // Downsample from 16kHz to 8kHz (Twilio requires 8kHz)
+        const pcm8k = downsample16kTo8k(pcm16k)
+        console.log('[TTS Playback] Downsampled to 8kHz, length:', pcm8k.length, 'bytes')
+        
+        // Convert PCM to μ-law (Twilio Media Streams format)
+        const mulawBuffer = convertPcmToMulaw(pcm8k)
+        console.log('[TTS Playback] Converted to μ-law, length:', mulawBuffer.length, 'bytes')
+        
+        // Convert entire audio to base64 (call-gpt sends entire payload at once, not chunked)
+        const base64Audio = mulawBuffer.toString('base64')
+        console.log('[TTS Playback] Base64 audio length:', base64Audio.length, 'chars')
+        
+        // Check if WebSocket is still open
+        if (ws.readyState !== ws.OPEN) {
+          console.warn('[TTS Playback] WebSocket is not open, cannot send audio')
+          isAISpeaking = false
+          return
+        }
+        
+        // Send entire audio payload in one message (call-gpt approach)
+        // This avoids glitchy/staticy sound from small chunks and timing issues
+        const mediaMessage = {
+          streamSid: ttsStreamSid,
+          event: 'media',
+          media: {
+            payload: base64Audio
+          }
+        }
+        
+        console.log('[TTS Playback] Sending entire audio payload (call-gpt style)')
+        
+        try {
+          ws.send(JSON.stringify(mediaMessage))
+          console.log('[TTS Playback] Audio sent successfully')
+        } catch (error: any) {
+          console.error('[TTS Playback] Error sending audio:', error)
+          isAISpeaking = false
+          return
+        }
+        
+        console.log('[TTS Playback] Finished streaming audio')
+        
+        // Reset flag after a brief delay
+        setTimeout(() => {
+          isAISpeaking = false
+          console.log('[TTS Playback] AI finished speaking')
+        }, 100)
+        
+      } catch (error: any) {
+        console.error('[TTS Playback] Error:', error)
+        isAISpeaking = false
+      }
+    }
     
     // Try to get base URL from request headers
     const host = req.headers.host
@@ -114,6 +237,15 @@ app.prepare().then(() => {
             mediaFormat: message.start?.mediaFormat,
           })
           
+          // Determine track direction from start event if available
+          // If TwiML specified track="inbound", all media will be inbound
+          // If track="both", we'll need to check message.media.track for each chunk
+          if (message.start?.tracks) {
+            // If tracks array exists, check what's available
+            // For now, default to inbound since that's what we're using
+            trackDirection = 'inbound'
+          }
+          
           // Check Azure credentials before initializing
           if (!process.env.AZURE_SPEECH_KEY || !process.env.AZURE_SPEECH_REGION) {
             console.error('[Azure] Missing credentials: AZURE_SPEECH_KEY or AZURE_SPEECH_REGION not set')
@@ -124,10 +256,15 @@ app.prepare().then(() => {
             return
           }
           
-          // Store streamSid for use in callbacks
+          // Store streamSid for use in callbacks (CRITICAL: needed to send audio back)
           const streamSid = message.streamSid
-          // Try to get callSid from multiple sources
-          const callSid = message.start?.callSid || message.callSid || callSidFromQuery
+          // Try to get callSid from multiple sources  
+          const callSid = message.start?.callSid || message.callSid || (callSidFromQuery ? callSidFromQuery : undefined)
+          
+          // Store WebSocket reference for sending audio back (for TTS streaming)
+          const wsAny = ws as any
+          wsAny.streamSid = streamSid
+          wsAny.callSid = callSid
           
           // Create session tracker
           session = new CallSession(streamSid, callSid)
@@ -139,9 +276,145 @@ app.prepare().then(() => {
           })
           console.log('[Session] Created session for stream:', streamSid, 'call:', callSid)
           
+          // Initialize Voice Activity Detector
+          vad = new VoiceActivityDetector(
+            {
+              speechThreshold: 800,
+              silenceThreshold: 200,
+              silenceDurationMs: 800,
+              speechStartFrames: 2,
+              debug: true, // Enable debug logging for now
+            },
+            {
+              onSpeechStart: () => {
+                console.log('[VAD] 🎤 User started speaking')
+                // Clear Azure audio buffer when speech starts
+                // This ensures we only assess the current utterance, not previous ones
+                if (recognizer) {
+                  recognizer.clearAudioBuffer()
+                }
+              },
+              onSpeechEnd: async () => {
+                console.log('[VAD] 🔇 User finished speaking')
+                
+                // Check if session and WebSocket are still valid
+                if (!session) {
+                  console.warn('[Conversation] No session available, skipping conversation turn')
+                  return
+                }
+                
+                // Check if WebSocket is still open
+                if (ws.readyState !== ws.OPEN) {
+                  console.warn('[Conversation] WebSocket is not open (state:', ws.readyState, '), skipping conversation turn')
+                  return
+                }
+
+                // Wait a brief moment for Deepgram to finalize transcript
+                // Deepgram might still be processing, so we give it a small delay
+                await new Promise(resolve => setTimeout(resolve, 300))
+                
+                // Re-check session and WebSocket after delay (stream might have stopped)
+                if (!session) {
+                  console.warn('[Conversation] Session became null during delay, skipping conversation turn')
+                  return
+                }
+                
+                if (ws.readyState !== ws.OPEN) {
+                  console.warn('[Conversation] WebSocket closed during delay, skipping conversation turn')
+                  return
+                }
+                
+                // Get the current user transcript
+                const currentTranscript = session.getLatestFinalTranscript()
+                
+                if (!currentTranscript || currentTranscript.trim().length === 0) {
+                  console.log('[Conversation] No valid transcript found, skipping conversation turn')
+                  console.log('[Conversation] Available transcripts:', session.getData().transcripts.length)
+                  return
+                }
+
+                const trimmedTranscript = currentTranscript.trim()
+                
+                // Skip if transcript is too short (likely noise or false positive)
+                if (trimmedTranscript.length < 2) {
+                  console.log('[Conversation] Transcript too short, skipping:', trimmedTranscript)
+                  return
+                }
+
+                console.log('[Conversation] Processing user message:', trimmedTranscript)
+                
+                // Add user message to conversation history
+                session.addUserMessage(trimmedTranscript)
+                
+                // Get conversation context (past + current)
+                const context = session.getConversationContext()
+                const turnCount = session.getConversationTurnCount()
+                
+                console.log('[Conversation] Context prepared (Turn #' + turnCount + '):')
+                console.log('  Past messages:', context.past.length)
+                if (context.past.length > 0) {
+                  context.past.forEach((msg, idx) => {
+                    const roleLabel = msg.role === 'user' ? '👤 User' : '🤖 AI'
+                    console.log(`    ${idx + 1}. ${roleLabel}: "${msg.text.substring(0, 50)}${msg.text.length > 50 ? '...' : ''}"`)
+                  })
+                } else {
+                  console.log('    (No previous conversation history)')
+                }
+                console.log('  Current message:', context.curr)
+                
+                // Get Gemini-formatted history for API call
+                const geminiHistory = session.getGeminiFormatHistory()
+                console.log('[Conversation] Ready for Gemini API call')
+                console.log(`[Conversation] Total messages in history: ${geminiHistory.length}`)
+                
+                // Call Gemini API with conversation context
+                try {
+                  const geminiResponse = await generateConversationResponse(
+                    context.past.map(msg => ({
+                      role: msg.role === 'assistant' ? 'model' : 'user',
+                      parts: [{ text: msg.text }]
+                    })),
+                    context.curr || '',
+                    'You are a friend. Respond to only the latest message from User. Do not reply to messages from "model". Keep responses no more than 20-50 words for phone conversations.'
+                  )
+
+                  // Final check before using session
+                  if (!session || ws.readyState !== ws.OPEN) {
+                    console.warn('[Conversation] Session or WebSocket invalid after Gemini call, skipping TTS')
+                    return
+                  }
+
+                  if (geminiResponse) {
+                    session.addAssistantMessage(geminiResponse)
+                    console.log('[Conversation] AI response:', geminiResponse)
+                    // Convert to TTS and play back
+                    await speakToUser(geminiResponse)
+                  }
+                } catch (error: any) {
+                  console.error('[Conversation] Error calling Gemini:', error)
+                  
+                  // Final check before using session
+                  if (!session || ws.readyState !== ws.OPEN) {
+                    console.warn('[Conversation] Session or WebSocket invalid after error, skipping fallback')
+                    return
+                  }
+                  
+                  // Optionally add a fallback message
+                  const fallbackMessage = "I'm sorry, I didn't catch that. Could you repeat?"
+                  session.addAssistantMessage(fallbackMessage)
+                  console.log('[Conversation] Using fallback message:', fallbackMessage)
+                  // Convert fallback to TTS and play back
+                  await speakToUser(fallbackMessage)
+                }
+
+              },
+            }
+          )
+          console.log('[VAD] Voice Activity Detector initialized')
+          
           // Start timer that checks for 30 seconds
           session.startTimer((elapsedSeconds) => {
-            if (elapsedSeconds === 30 && !feedbackTriggered) {
+            if (elapsedSeconds === 60 && !feedbackTriggered) {
               feedbackTriggered = true
               console.log('[Session] 30 seconds reached, triggering feedback')
               handleFeedbackAt30Seconds(session!, baseUrl).catch((error) => {
@@ -298,6 +571,21 @@ app.prepare().then(() => {
         } else if (message.event === 'media') {
           // Twilio sends audio as base64-encoded μ-law
           // According to Twilio docs: message.media.payload contains base64 μ-law
+          // Log incoming media format for reference (first few only)
+          if (!(ws as any)._inboundMediaCount) {
+            (ws as any)._inboundMediaCount = 0
+          }
+          if ((ws as any)._inboundMediaCount++ < 3) {
+            console.log('[Media Stream] Incoming media format:', {
+              event: message.event,
+              hasStreamSid: !!message.streamSid,
+              hasSequenceNumber: !!message.sequenceNumber,
+              mediaTrack: message.media?.track,
+              hasPayload: !!message.media?.payload,
+              payloadLength: message.media?.payload?.length || 0
+            })
+          }
+          
           if (recognizer && message.media?.payload) {
             try {
               // Log first few media events to verify we're getting payloads
@@ -312,6 +600,17 @@ app.prepare().then(() => {
               
               // Convert μ-law to PCM
               const pcmBuffer = convertTwilioAudioToPcm(message.media.payload)
+              
+              // Check if this media event specifies a track (if track="both" in TwiML)
+              const mediaTrack = message.media?.track
+              const currentTrack = mediaTrack === 'inbound' || mediaTrack === 'outbound' 
+                ? mediaTrack 
+                : trackDirection // Use default from start event
+              
+              // Process audio through VAD (only for inbound/user audio)
+              if (vad && currentTrack === 'inbound') {
+                vad.processAudio(pcmBuffer, currentTrack)
+              }
               
               // Store audio chunk in session
               if (session) {
@@ -372,6 +671,20 @@ app.prepare().then(() => {
           }
         } else if (message.event === 'stop') {
           console.log('[Media Stream] Stream stopped')
+          console.log('[Media Stream] Stop event details:', JSON.stringify(message, null, 2))
+          console.log('[Media Stream] Stop event - isAISpeaking:', isAISpeaking)
+          console.log('[Media Stream] Stop event - session exists:', !!session)
+          console.log('[Media Stream] Stop event - WebSocket state:', ws.readyState)
+          
+          // Don't clean up immediately if AI is speaking - wait for it to finish
+          // This prevents the stream from closing mid-conversation
+          if (isAISpeaking) {
+            console.log('[Media Stream] AI is speaking, deferring cleanup until TTS completes')
+            // Set a flag to clean up after TTS finishes
+            // The cleanup will happen in the speakToUser function after it finishes
+            return
+          }
+          
           if (session) {
             session.stopTimer()
             session.cleanup()
@@ -385,6 +698,10 @@ app.prepare().then(() => {
           if (transcriber) {
             transcriber.close()
             transcriber = null
+          }
+          if (vad) {
+            vad.destroy()
+            vad = null
           }
         }
       } catch (error: any) {
@@ -410,6 +727,10 @@ app.prepare().then(() => {
         transcriber.close()
         transcriber = null
       }
+      if (vad) {
+        vad.destroy()
+        vad = null
+      }
     })
 
     ws.on('error', (error) => {
@@ -427,6 +748,10 @@ app.prepare().then(() => {
       if (transcriber) {
         transcriber.close()
         transcriber = null
+      }
+      if (vad) {
+        vad.destroy()
+        vad = null
       }
     })
   })

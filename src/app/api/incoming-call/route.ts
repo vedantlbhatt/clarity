@@ -54,16 +54,13 @@ export async function POST(request: NextRequest) {
     console.log('[Incoming Call] Base URL:', baseUrl)
     console.log('[Incoming Call] Media Stream URL:', mediaStreamUrl)
 
-    // Generate TwiML with Media Stream
+    // Generate TwiML with Media Stream - use <Connect><Stream> for bidirectional audio (call-gpt approach)
     const escapedUrl = mediaStreamUrl.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
     const twiml = '<?xml version="1.0" encoding="UTF-8"?>\n' +
       '<Response>\n' +
-      '  <Start>\n' +
-      '    <Stream url="' + escapedUrl + '" track="inbound" />\n' +
-      '  </Start>\n' +
-      '  <Say>Please speak now. I\'ll assess your pronunciation.</Say>\n' +
-      '  <Pause length="300"/>\n' +
-      '  <Say>Thank you for your call. Goodbye.</Say>\n' +
+      '  <Connect>\n' +
+      '    <Stream url="' + escapedUrl + '" />\n' +
+      '  </Connect>\n' +
       '</Response>'
 
     console.log('[Incoming Call] Returning TwiML')
