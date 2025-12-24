@@ -293,7 +293,7 @@ app.prepare().then(() => {
             {
               speechThreshold: 800,
               silenceThreshold: 200,
-              silenceDurationMs: 800,
+              silenceDurationMs: 250, // Reduced to 250ms for faster response (minimum safe value)
               speechStartFrames: 2,
               debug: true, // Enable debug logging for now
             },
@@ -337,9 +337,7 @@ app.prepare().then(() => {
                   return
                 }
 
-                // Wait a brief moment for Deepgram to finalize transcript
-                // Deepgram might still be processing, so we give it a small delay
-                await new Promise(resolve => setTimeout(resolve, 300))
+                // No delay needed - we use interim transcripts as fallback if final isn't ready yet
                 
                 // Re-check session and WebSocket after delay (stream might have stopped)
                 if (!session) {
@@ -352,7 +350,8 @@ app.prepare().then(() => {
                   return
                 }
                 
-                // Get the current user transcript
+                // Get the current user transcript (uses interim as fallback if final not ready)
+                // This allows us to start Gemini call immediately without waiting for Azure finalization
                 const currentTranscript = session.getLatestFinalTranscript()
                 
                 if (!currentTranscript || currentTranscript.trim().length === 0) {
@@ -360,6 +359,8 @@ app.prepare().then(() => {
                   console.log('[Conversation] Available transcripts:', session.getData().transcripts.length)
                   return
                 }
+                
+                console.log('[Conversation] Using transcript (may be interim):', currentTranscript)
 
                 const trimmedTranscript = currentTranscript.trim()
                 

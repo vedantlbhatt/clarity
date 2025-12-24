@@ -240,31 +240,57 @@ export class CallSession {
 
   /**
    * Get the most recent final transcript (from Azure STT or Deepgram)
+   * Falls back to latest interim transcript if no final is available yet
    * This is used to get the current user message when speech ends
    */
   getLatestFinalTranscript(): string | null {
+    // First try to get final transcripts
     const finalTranscripts = this.data.transcripts
       .filter(t => t.isFinal)
       .sort((a, b) => b.timestamp - a.timestamp) // Most recent first
     
-    if (finalTranscripts.length === 0) {
-      return null
-    }
-
     // Get the most recent final transcript
     // If there are multiple final transcripts since last user message, combine them
-    const lastUserMessageTime = this.data.conversationHistory
-      .filter(msg => msg.role === 'user')
-      .slice(-1)[0]?.timestamp || 0
+    if (finalTranscripts.length > 0) {
+      const lastUserMessageTime = this.data.conversationHistory
+        .filter(msg => msg.role === 'user')
+        .slice(-1)[0]?.timestamp || 0
 
-    // Get all final transcripts after the last user message
-    const recentTranscripts = finalTranscripts
-      .filter(t => t.timestamp > lastUserMessageTime)
-      .map(t => t.text)
-      .join(' ')
-      .trim()
+      // Get all final transcripts after the last user message
+      const recentTranscripts = finalTranscripts
+        .filter(t => t.timestamp > lastUserMessageTime)
+        .map(t => t.text)
+        .join(' ')
+        .trim()
 
-    return recentTranscripts || finalTranscripts[0].text
+      if (recentTranscripts) {
+        return recentTranscripts
+      }
+      
+      return finalTranscripts[0].text
+    }
+
+    // Fallback: If no final transcript available yet, use the latest interim transcript
+    // This handles the case where VAD detects speech end before Azure finalizes
+    const allTranscripts = this.data.transcripts
+      .sort((a, b) => b.timestamp - a.timestamp) // Most recent first
+    
+    if (allTranscripts.length > 0) {
+      const lastUserMessageTime = this.data.conversationHistory
+        .filter(msg => msg.role === 'user')
+        .slice(-1)[0]?.timestamp || 0
+
+      // Get latest transcript (interim or final) after last user message
+      const latestTranscript = allTranscripts.find(t => t.timestamp > lastUserMessageTime)
+      if (latestTranscript) {
+        console.log(`[Session] Using ${latestTranscript.isFinal ? 'final' : 'interim'} transcript as fallback: "${latestTranscript.text}"`)
+        return latestTranscript.text
+      }
+      
+      return allTranscripts[0].text
+    }
+
+    return null
   }
 
   /**

@@ -107,6 +107,8 @@ export class AzureSpeechRecognizer {
         
         console.log(`[Azure] Step 1 text passed validation check, proceeding to Step 2 with referenceText: "${text}"`)
         
+        // Step 2: Do scripted pronunciation assessment in background (non-blocking)
+        // This allows conversation to proceed immediately without waiting for pronunciation assessment
         // Prevent concurrent processing
         if (this.isProcessing) {
           console.log('[Azure] Already processing, skipping...')
@@ -114,19 +116,17 @@ export class AzureSpeechRecognizer {
         }
         this.isProcessing = true
         
-        try {
-          // Step 2: Do scripted pronunciation assessment using STT transcript
-          await this.doScriptedPronunciationAssessment(text)
-        } catch (error) {
+        // Run Step 2 in background - don't await it (non-blocking for conversation)
+        this.doScriptedPronunciationAssessment(text).catch((error) => {
           console.error('[Azure] Error in two-step process:', error)
           if (this.config.onError) {
             this.config.onError(error instanceof Error ? error : new Error(String(error)))
           }
-        } finally {
+        }).finally(() => {
           this.isProcessing = false
           // Don't clear buffer here - it will be cleared when next speech starts
           // This ensures Step 2 can use the buffer even if it completes after speech ends
-        }
+        })
       } else {
         console.log(`[Azure] Recognition event but not RecognizedSpeech - Reason: ${e.result.reason}`)
       }
