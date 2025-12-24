@@ -375,7 +375,7 @@ app.prepare().then(() => {
                       parts: [{ text: msg.text }]
                     })),
                     context.curr || '',
-                    'You are a friendly English pronunciation tutor. Have natural, helpful conversations with students. Keep responses concise (1-2 sentences) for phone conversations.'
+                    'You are a friend. Keep responses no more than 20-50 words for phone conversations.'
                   )
 
                   // Final check before using session
@@ -414,7 +414,7 @@ app.prepare().then(() => {
           
           // Start timer that checks for 30 seconds
           session.startTimer((elapsedSeconds) => {
-            if (elapsedSeconds === 30 && !feedbackTriggered) {
+            if (elapsedSeconds === 60 && !feedbackTriggered) {
               feedbackTriggered = true
               console.log('[Session] 30 seconds reached, triggering feedback')
               handleFeedbackAt30Seconds(session!, baseUrl).catch((error) => {
