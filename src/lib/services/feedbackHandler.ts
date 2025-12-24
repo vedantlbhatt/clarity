@@ -40,8 +40,16 @@ export async function handleFeedbackAt30Seconds(
       console.error('[Feedback Handler] Error generating feedback:', error)
       feedbackText = "Thanks for practicing! Keep working on your pronunciation and fluency."
     }
+  } catch (error: any) {
+    console.error('[Feedback Handler] Error in feedback handler:', error)
+    // Final fallback
+    if (session.getData().callSid) {
+      await playFeedbackViaSay(session.getData().callSid, "Thanks for practicing!")
+    }
+  }0
 
     // Convert feedback to speech
+    /*
     const ttsDir = join(process.cwd(), 'results', 'tts')
     await mkdir(ttsDir, { recursive: true })
     
@@ -71,6 +79,7 @@ export async function handleFeedbackAt30Seconds(
       await playFeedbackViaSay(session.getData().callSid, "Thanks for practicing!")
     }
   }
+    */
 }
 
 /**

@@ -375,7 +375,7 @@ app.prepare().then(() => {
                       parts: [{ text: msg.text }]
                     })),
                     context.curr || '',
-                    'You are a friend. Keep responses no more than 20-50 words for phone conversations.'
+                    'You are a friend. Respond to only the latest message from User. Do not reply to messages from "model". Keep responses no more than 20-50 words for phone conversations.'
                   )
 
                   // Final check before using session
