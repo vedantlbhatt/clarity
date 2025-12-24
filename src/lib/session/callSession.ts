@@ -84,6 +84,33 @@ export class CallSession {
   }
 
   /**
+   * Add a transcript from Azure STT (Step 1 recognition)
+   */
+  addAzureTranscript(text: string, isFinal: boolean = true): void {
+    const timestamp = Date.now()
+    this.data.transcripts.push({
+      text: text.trim(),
+      isFinal: isFinal,
+      timestamp,
+      words: undefined, // Azure STT Step 1 doesn't provide word-level confidence
+    })
+    
+    // Extract filler words (um, uh, etc.) from transcript
+    const fillerWordPattern = /\b(um|uh|er|ah|like|you know|well|so)\b/gi
+    const matches = text.match(fillerWordPattern)
+    if (matches) {
+      matches.forEach((word) => {
+        this.data.fillerWords.push({
+          word: word.toLowerCase(),
+          timestamp,
+        })
+      })
+    }
+    
+    console.log(`[Session] Added Azure transcript (${isFinal ? 'final' : 'interim'}): "${text}"`)
+  }
+
+  /**
    * Add an Azure pronunciation assessment result
    */
   addAzureResult(result: PronunciationAssessmentResult, text: string): void {
@@ -212,7 +239,7 @@ export class CallSession {
   }
 
   /**
-   * Get the most recent final transcript from Deepgram
+   * Get the most recent final transcript (from Azure STT or Deepgram)
    * This is used to get the current user message when speech ends
    */
   getLatestFinalTranscript(): string | null {

@@ -403,7 +403,7 @@ app.prepare().then(() => {
                       parts: [{ text: msg.text }]
                     })),
                     context.curr || '',
-                    'You are a friend on a phone call. MAXIMUM 10 WORDS PER RESPONSE. One short sentence only. Be natural but BRIEF. Only respond to the user\'s latest message.'
+                    'You are a friend on a phone call. No more than 15 words aresponse. One short sentence only. Be natural but BRIEF. Only respond to the user\'s latest message.'
                   )
 
                   // Final check before using session
@@ -451,7 +451,9 @@ app.prepare().then(() => {
             }
           })
           
-          // Initialize Deepgram Transcriber
+          // Deepgram Transcriber - DISABLED (using Azure STT for transcription instead)
+          // Keeping code but not initializing
+          /*
           try {
             transcriber = new DeepgramTranscriber({
               onTranscript: async (result) => {
@@ -499,12 +501,20 @@ app.prepare().then(() => {
             console.error('[Deepgram] Failed to initialize:', error)
             // Don't fail the whole call if Deepgram fails
           }
+          */
+          console.log('[Deepgram] Transcriber disabled - using Azure STT for transcription')
           
           // Initialize Azure Speech Recognizer (unscripted mode - no reference text)
           try {
             
             recognizer = new AzureSpeechRecognizer({
               // No referenceText - using unscripted mode
+              onTranscript: (text, isFinal) => {
+                // Store Azure STT transcript in session (for Gemini conversation)
+                if (session) {
+                  session.addAzureTranscript(text, isFinal)
+                }
+              },
               onResult: async (result, text) => {
                 console.log('[Pronunciation] Result received:', {
                   text,
@@ -680,10 +690,10 @@ app.prepare().then(() => {
                 
                 recognizer.writeAudioChunk(pcmBuffer)
                 
-                // Also send to Deepgram for transcription
-                if (transcriber) {
-                  transcriber.sendAudio(pcmBuffer)
-                }
+                // Deepgram disabled - using Azure STT for transcription instead
+                // if (transcriber) {
+                //   transcriber.sendAudio(pcmBuffer)
+                // }
               } else {
                 console.warn(`[Media Stream] WARNING: PCM buffer is empty after conversion`)
               }
@@ -723,10 +733,11 @@ app.prepare().then(() => {
             recognizer.close()
             recognizer = null
           }
-          if (transcriber) {
-            transcriber.close()
-            transcriber = null
-          }
+          // Deepgram disabled
+          // if (transcriber) {
+          //   transcriber.close()
+          //   transcriber = null
+          // }
           if (vad) {
             vad.destroy()
             vad = null

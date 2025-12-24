@@ -20,6 +20,7 @@ export interface PronunciationAssessmentResult {
 export interface AzureSpeechRecognizerConfig {
   referenceText?: string // Optional: if not provided, uses unscripted mode
   onResult?: (result: PronunciationAssessmentResult, text: string) => void
+  onTranscript?: (text: string, isFinal: boolean) => void // Callback for STT transcripts (Step 1)
   onError?: (error: Error) => void
 }
 
@@ -79,6 +80,10 @@ export class AzureSpeechRecognizer {
     this.recognizer.recognizing = (s, e) => {
       if (e.result.text) {
         console.log(`[Azure] Recognizing (partial): "${e.result.text}"`)
+        // Notify about partial transcript
+        if (this.config.onTranscript) {
+          this.config.onTranscript(e.result.text, false) // false = interim/partial
+        }
       }
     }
 
@@ -88,6 +93,11 @@ export class AzureSpeechRecognizer {
       if (e.result.reason === sdk.ResultReason.RecognizedSpeech && e.result.text) {
         const text = e.result.text.trim()
         console.log(`[Azure] Step 1 - STT Recognized (final): "${text}"`)
+        
+        // Notify about transcript (for conversation/Gemini)
+        if (this.config.onTranscript) {
+          this.config.onTranscript(text, true) // Always final in recognized event
+        }
         
         // Log everything, even if it's just punctuation, so we can see what Azure is hearing
         if (!text || text === '.' || text.length < 2) {
