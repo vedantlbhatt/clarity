@@ -151,6 +151,12 @@ app.prepare().then(() => {
           rate: '+0%',
         })
         
+        // Check if user interrupted during TTS generation
+        if (!isAISpeaking) {
+          console.log('[TTS Playback] User interrupted during TTS generation, aborting')
+          return
+        }
+        
         console.log('[TTS Playback] TTS generated, length:', ttsBuffer.length, 'bytes')
         
         // Extract PCM from WAV (Azure returns 16kHz WAV)
@@ -168,6 +174,12 @@ app.prepare().then(() => {
         // Convert entire audio to base64 (call-gpt sends entire payload at once, not chunked)
         const base64Audio = mulawBuffer.toString('base64')
         console.log('[TTS Playback] Base64 audio length:', base64Audio.length, 'chars')
+        
+        // Check if user interrupted during audio processing
+        if (!isAISpeaking) {
+          console.log('[TTS Playback] User interrupted during audio processing, aborting')
+          return
+        }
         
         // Check if WebSocket is still open
         if (ws.readyState !== ws.OPEN) {
@@ -288,6 +300,22 @@ app.prepare().then(() => {
             {
               onSpeechStart: () => {
                 console.log('[VAD] 🎤 User started speaking')
+                
+                // INTERRUPTION HANDLING: If AI is speaking, stop it immediately
+                if (isAISpeaking) {
+                  console.log('[VAD] ⚠️ User interrupted AI - stopping TTS playback')
+                  const streamSid = (ws as any).streamSid
+                  if (streamSid && ws.readyState === ws.OPEN) {
+                    // Send clear event to Twilio to stop current audio (call-gpt approach)
+                    ws.send(JSON.stringify({
+                      streamSid: streamSid,
+                      event: 'clear',
+                    }))
+                    console.log('[VAD] Sent clear event to Twilio to stop AI audio')
+                  }
+                  isAISpeaking = false // Reset flag so user speech can be processed
+                }
+                
                 // Clear Azure audio buffer when speech starts
                 // This ensures we only assess the current utterance, not previous ones
                 if (recognizer) {
@@ -375,7 +403,7 @@ app.prepare().then(() => {
                       parts: [{ text: msg.text }]
                     })),
                     context.curr || '',
-                    'You are a friend. Respond to only the latest message from User. Do not reply to messages from "model". Keep responses no more than 20-50 words for phone conversations.'
+                    'You are a friend on a phone call. MAXIMUM 10 WORDS PER RESPONSE. One short sentence only. Be natural but BRIEF. Only respond to the user\'s latest message.'
                   )
 
                   // Final check before using session

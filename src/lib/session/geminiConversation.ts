@@ -45,7 +45,7 @@ export async function generateConversationResponse(
     
     // If no history, prepend system prompt to first user message
     if (history.length === 0) {
-      const firstMessage = `${systemInstructionText}\n\nNow, respond to the user naturally. User: ${currentMessage}`
+      const firstMessage = `${systemInstructionText}\n\nUser: ${currentMessage}\n\nRemember: MAXIMUM 15 WORDS. One short sentence only.`
       
       const chat = model.startChat({
         history: [],
@@ -67,8 +67,9 @@ export async function generateConversationResponse(
         history: chatHistory,
       })
       
-      // Send current message and get response
-      const result = await chat.sendMessage(currentMessage)
+      // Send current message with reminder to keep it short
+      const messageWithReminder = `${currentMessage}\n\n[Remember: MAXIMUM 15 WORDS. One short sentence only.]`
+      const result = await chat.sendMessage(messageWithReminder)
       const response = result.response
       const text = response.text()
       
