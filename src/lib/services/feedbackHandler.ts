@@ -6,15 +6,18 @@ import twilio from 'twilio'
 import { join } from 'path'
 import { mkdir } from 'fs/promises'
 
+export const FEEDBACK_TRIGGER_SECONDS = 60
+export const FEEDBACK_TRIGGER_MS = FEEDBACK_TRIGGER_SECONDS * 1000
+
 /**
- * Handle feedback generation and playback at 30 seconds
+ * Handle feedback generation and playback at 60 seconds
  */
-export async function handleFeedbackAt30Seconds(
+export async function handleFeedbackAt60Seconds(
   session: CallSession,
   baseUrl: string
 ): Promise<void> {
   try {
-    console.log('[Feedback Handler] Starting feedback generation at 30 seconds')
+    console.log('[Feedback Handler] Starting feedback generation at 60 seconds')
 
     // Get session data
     const sessionData = session.getData()

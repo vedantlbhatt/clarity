@@ -24,6 +24,23 @@ type SessionData = {
   callSid?: string
   userTranscripts: string[]
   aiTranscripts: string[]
+  pronunciationResults: Array<{
+    text: string
+    accuracy: number
+    pronunciation: number
+    completeness: number
+    fluency: number
+    prosody: number
+    words?: Array<{
+      word: string
+      accuracy: number
+      errorType?: string
+      phonemes?: Array<{
+        phoneme: string
+        accuracy: number
+      }>
+    }>
+  }>
 }
 
 const sessions = new Map<string, SessionData>()
@@ -152,7 +169,7 @@ app.prepare().then(() => {
 
       uvSocket.on('message', (data) => {
         const text = data.toString()
-        console.log('[Ultravox] → Twilio message', text.slice(0, 200))
+        //console.log('[Ultravox] → Twilio message', text.slice(0, 200))
         if (ws.readyState === ws.OPEN) {
           ws.send(text)
         }
@@ -165,6 +182,52 @@ app.prepare().then(() => {
       uvSocket.on('error', (error) => {
         console.error('[Ultravox] WebSocket error:', error)
       })
+    }
+
+    const logCallSummary = (sid: string) => {
+      const session = sessions.get(sid)
+      if (!session) return
+      const count = session.pronunciationResults.length
+      console.log(`[Feedback] Call summary for stream ${sid}:`)
+      console.log(`  Pronunciation results: ${count}`)
+      if (count > 0) {
+        const last = session.pronunciationResults[count - 1]
+        console.log(
+          `  Last result -> Acc:${last.accuracy}% Pron:${last.pronunciation}% Comp:${last.completeness}% Flu:${last.fluency}% Pros:${last.prosody}% text="${last.text}"`
+        )
+      }
+
+      // Aggregate phoneme accuracy across all results
+      const phonemeStats = new Map<string, { sum: number; count: number }>()
+      const allWords = session.pronunciationResults.flatMap((r) => r.words || [])
+      allWords.forEach((w) => {
+        (w.phonemes || []).forEach((p) => {
+          const entry = phonemeStats.get(p.phoneme) || { sum: 0, count: 0 }
+          entry.sum += p.accuracy
+          entry.count += 1
+          phonemeStats.set(p.phoneme, entry)
+        })
+      })
+
+      const phonemeAverages = Array.from(phonemeStats.entries()).map(([phoneme, v]) => ({
+        phoneme,
+        avg: v.sum / v.count,
+        count: v.count,
+      }))
+
+      const worstPhonemes = phonemeAverages
+        .sort((a, b) => a.avg - b.avg)
+        .slice(0, 5)
+
+      if (worstPhonemes.length > 0) {
+        console.log('  Phonemes needing work (lowest avg accuracy):')
+        worstPhonemes.forEach((p) => {
+          console.log(`    /${p.phoneme}/  avg:${p.avg.toFixed(1)}%  samples:${p.count}`)
+        })
+      }
+
+      const resultsPath = join(process.cwd(), 'results', `pronunciation_${sid}.txt`)
+      console.log(`  Detailed file: ${resultsPath}`)
     }
 
     const ensureRecognizer = () => {
@@ -191,6 +254,29 @@ app.prepare().then(() => {
           })
 
           try {
+            if (streamSid) {
+              const s = sessions.get(streamSid)
+              if (s) {
+                s.pronunciationResults.push({
+                  text,
+                  accuracy: result.accuracyScore,
+                  pronunciation: result.pronunciationScore,
+                  completeness: result.completenessScore,
+                  fluency: result.fluencyScore,
+                  prosody: result.prosodyScore,
+                  words: result.words?.map((w) => ({
+                    word: w.word,
+                    accuracy: w.accuracyScore,
+                    errorType: w.errorType,
+                    phonemes: w.phonemes?.map((p) => ({
+                      phoneme: p.phoneme,
+                      accuracy: p.accuracyScore,
+                    })),
+                  })),
+                })
+              }
+            }
+
             const resultsDir = join(process.cwd(), 'results')
             await mkdir(resultsDir, { recursive: true })
             const filename = `pronunciation_${streamSid || 'unknown'}.txt`
@@ -258,9 +344,11 @@ app.prepare().then(() => {
         return
       }
 
+      /*
       if (message?.event) {
         console.log('[Twilio] event ->', message.event, 'seq', message.sequenceNumber || '')
       }
+        */
 
       // Forward to Ultravox if connected
       if (uvSocket && uvSocket.readyState === WebSocket.OPEN) {
@@ -270,12 +358,14 @@ app.prepare().then(() => {
       }
 
       if (message.event === 'start') {
-        streamSid = message.streamSid
-        console.log('[Media Stream] Stream started:', { streamSid, callSid: message.start?.callSid })
-        sessions.set(streamSid, {
+        const sid: string = message.streamSid
+        streamSid = sid
+        console.log('[Media Stream] Stream started:', { streamSid: sid, callSid: message.start?.callSid })
+        sessions.set(sid, {
           callSid: message.start?.callSid || callSidFromQuery,
           userTranscripts: [],
           aiTranscripts: [],
+          pronunciationResults: [],
         })
         try {
           await ensureUltravox()
@@ -299,6 +389,7 @@ app.prepare().then(() => {
         console.log('[Media Stream] Stream stopped')
         cleanup()
         if (streamSid) {
+          logCallSummary(streamSid)
           sessions.delete(streamSid)
         }
       }
@@ -308,6 +399,7 @@ app.prepare().then(() => {
       console.log('[Media Stream] WebSocket connection closed')
       cleanup()
       if (streamSid) {
+        logCallSummary(streamSid)
         sessions.delete(streamSid)
       }
     })
@@ -316,6 +408,7 @@ app.prepare().then(() => {
       console.error('[Media Stream] WebSocket error:', error)
       cleanup()
       if (streamSid) {
+        logCallSummary(streamSid)
         sessions.delete(streamSid)
       }
     })
