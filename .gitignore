@@ -63,3 +63,5 @@ ENV/
 test_audio.wav
 
 call-gpt-main/
+ultravox-main/
+ultravox-examples-main/
