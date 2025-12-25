@@ -211,13 +211,19 @@ export class AzureSpeechRecognizer {
     if (this.isProcessing) return
     this.isProcessing = true
 
-    while (this.assessmentQueue.length > 0) {
-      const item = this.assessmentQueue.shift()
-      if (!item) continue
-      await this.doScriptedPronunciationAssessment(item.referenceText, item.audio)
+    try {
+      while (this.assessmentQueue.length > 0) {
+        const item = this.assessmentQueue.shift()
+        if (!item) continue
+        try {
+          await this.doScriptedPronunciationAssessment(item.referenceText, item.audio)
+        } catch (err) {
+          console.error('[Azure] Assessment queue item failed, continuing:', err)
+        }
+      }
+    } finally {
+      this.isProcessing = false
     }
-
-    this.isProcessing = false
   }
 
   /**
