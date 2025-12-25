@@ -20,6 +20,37 @@ const port = parseInt(process.env.PORT || '3000', 10)
 const app = next({ dev, hostname, port })
 const handle = app.getRequestHandler()
 
+type SessionData = {
+  callSid?: string
+  userTranscripts: string[]
+  aiTranscripts: string[]
+}
+
+const sessions = new Map<string, SessionData>()
+
+const appendTranscript = async (
+  streamSid: string,
+  speaker: 'user' | 'ai',
+  text: string
+) => {
+  const session = sessions.get(streamSid)
+  if (!session) return
+  if (speaker === 'user') {
+    session.userTranscripts.push(text)
+  } else {
+    session.aiTranscripts.push(text)
+  }
+  try {
+    const resultsDir = join(process.cwd(), 'results')
+    await mkdir(resultsDir, { recursive: true })
+    const filepath = join(resultsDir, `transcripts_${streamSid}.txt`)
+    const line = `[${speaker.toUpperCase()}] ${text}\n`
+    await appendFile(filepath, line, 'utf-8')
+  } catch (error) {
+    console.error('[Transcripts] Error writing transcript:', error)
+  }
+}
+
 app.prepare().then(() => {
   const server = createServer()
 
@@ -241,6 +272,11 @@ app.prepare().then(() => {
       if (message.event === 'start') {
         streamSid = message.streamSid
         console.log('[Media Stream] Stream started:', { streamSid, callSid: message.start?.callSid })
+        sessions.set(streamSid, {
+          callSid: message.start?.callSid || callSidFromQuery,
+          userTranscripts: [],
+          aiTranscripts: [],
+        })
         try {
           await ensureUltravox()
         } catch (error: any) {
@@ -262,17 +298,26 @@ app.prepare().then(() => {
       } else if (message.event === 'stop') {
         console.log('[Media Stream] Stream stopped')
         cleanup()
+        if (streamSid) {
+          sessions.delete(streamSid)
+        }
       }
     })
 
     ws.on('close', () => {
       console.log('[Media Stream] WebSocket connection closed')
       cleanup()
+      if (streamSid) {
+        sessions.delete(streamSid)
+      }
     })
 
     ws.on('error', (error) => {
       console.error('[Media Stream] WebSocket error:', error)
       cleanup()
+      if (streamSid) {
+        sessions.delete(streamSid)
+      }
     })
   })
 
