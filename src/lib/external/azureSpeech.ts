@@ -32,6 +32,8 @@ export class AzureSpeechRecognizer {
   private isClosed = false
   private config: AzureSpeechRecognizerConfig
   private audioBuffer: Buffer[] = [] // Buffer audio chunks for two-step processing
+  private audioBufferBytes = 0
+  private readonly maxAudioBufferBytes = 64_000 // ~4 seconds at 8kHz 16-bit mono
   private isProcessing = false // Flag to prevent concurrent processing
 
   constructor(config: AzureSpeechRecognizerConfig) {
@@ -171,8 +173,18 @@ export class AzureSpeechRecognizer {
     if (this.isClosed) {
       return
     }
-    // Buffer audio chunk for two-step processing
-    this.audioBuffer.push(Buffer.from(audioChunk))
+    // Buffer audio chunk for two-step processing (bounded window to avoid stale/oversized buffers)
+    const copy = Buffer.from(audioChunk)
+    this.audioBuffer.push(copy)
+    this.audioBufferBytes += copy.length
+
+    // Trim from the front if buffer exceeds max size
+    while (this.audioBufferBytes > this.maxAudioBufferBytes && this.audioBuffer.length > 0) {
+      const removed = this.audioBuffer.shift()
+      if (removed) {
+        this.audioBufferBytes -= removed.length
+      }
+    }
     
     // Convert Node.js Buffer to ArrayBuffer for Azure SDK
     // Buffer.buffer is the underlying ArrayBuffer, but we need to slice it to the correct size
@@ -189,6 +201,7 @@ export class AzureSpeechRecognizer {
    */
   public clearAudioBuffer(): void {
     this.audioBuffer = []
+    this.audioBufferBytes = 0
     console.log('[Azure] Audio buffer cleared')
   }
 
