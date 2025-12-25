@@ -33,8 +33,11 @@ export class AzureSpeechRecognizer {
   private config: AzureSpeechRecognizerConfig
   private audioBuffer: Buffer[] = [] // Buffer audio chunks for two-step processing
   private audioBufferBytes = 0
-  private readonly maxAudioBufferBytes = 64_000 // ~4 seconds at 8kHz 16-bit mono
+  private readonly maxAudioBufferBytes = 320_000 // ~20 seconds at 8kHz 16-bit mono
   private isProcessing = false // Flag to prevent concurrent processing
+  private currentUtterance: Buffer[] = [] // Chunks for current utterance
+  private currentUtteranceBytes = 0
+  private assessmentQueue: Array<{ referenceText: string; audio: Buffer[] }> = []
 
   constructor(config: AzureSpeechRecognizerConfig) {
     this.config = config
@@ -108,27 +111,7 @@ export class AzureSpeechRecognizer {
         }
         
         console.log(`[Azure] Step 1 text passed validation check, proceeding to Step 2 with referenceText: "${text}"`)
-        
-        // Step 2: Do scripted pronunciation assessment in background (non-blocking)
-        // This allows conversation to proceed immediately without waiting for pronunciation assessment
-        // Prevent concurrent processing
-        if (this.isProcessing) {
-          console.log('[Azure] Already processing, skipping...')
-          return
-        }
-        this.isProcessing = true
-        
-        // Run Step 2 in background - don't await it (non-blocking for conversation)
-        this.doScriptedPronunciationAssessment(text).catch((error) => {
-          console.error('[Azure] Error in two-step process:', error)
-          if (this.config.onError) {
-            this.config.onError(error instanceof Error ? error : new Error(String(error)))
-          }
-        }).finally(() => {
-          this.isProcessing = false
-          // Don't clear buffer here - it will be cleared when next speech starts
-          // This ensures Step 2 can use the buffer even if it completes after speech ends
-        })
+        this.enqueueAssessment(text)
       } else {
         console.log(`[Azure] Recognition event but not RecognizedSpeech - Reason: ${e.result.reason}`)
       }
@@ -178,6 +161,16 @@ export class AzureSpeechRecognizer {
     this.audioBuffer.push(copy)
     this.audioBufferBytes += copy.length
 
+    // Track current utterance audio
+    this.currentUtterance.push(copy)
+    this.currentUtteranceBytes += copy.length
+    while (this.currentUtteranceBytes > this.maxAudioBufferBytes && this.currentUtterance.length > 0) {
+      const removedUtterance = this.currentUtterance.shift()
+      if (removedUtterance) {
+        this.currentUtteranceBytes -= removedUtterance.length
+      }
+    }
+
     // Trim from the front if buffer exceeds max size
     while (this.audioBufferBytes > this.maxAudioBufferBytes && this.audioBuffer.length > 0) {
       const removed = this.audioBuffer.shift()
@@ -196,20 +189,42 @@ export class AzureSpeechRecognizer {
   }
 
   /**
-   * Clear the audio buffer - should be called when user starts speaking
-   * to ensure we only assess the current utterance, not previous ones
+   * Queue an assessment for the current utterance using a snapshot of the buffered audio.
    */
-  public clearAudioBuffer(): void {
-    this.audioBuffer = []
-    this.audioBufferBytes = 0
-    console.log('[Azure] Audio buffer cleared')
+  private enqueueAssessment(referenceText: string): void {
+    const audioSnapshot = [...this.currentUtterance]
+    this.assessmentQueue.push({ referenceText, audio: audioSnapshot })
+    this.currentUtterance = []
+    this.currentUtteranceBytes = 0
+    this.processAssessmentQueue().catch((error) => {
+      console.error('[Azure] Error in assessment queue:', error)
+      if (this.config.onError) {
+        this.config.onError(error instanceof Error ? error : new Error(String(error)))
+      }
+    })
+  }
+
+  /**
+   * Process the assessment queue sequentially to avoid overlap.
+   */
+  private async processAssessmentQueue(): Promise<void> {
+    if (this.isProcessing) return
+    this.isProcessing = true
+
+    while (this.assessmentQueue.length > 0) {
+      const item = this.assessmentQueue.shift()
+      if (!item) continue
+      await this.doScriptedPronunciationAssessment(item.referenceText, item.audio)
+    }
+
+    this.isProcessing = false
   }
 
   /**
    * Step 2: Do scripted pronunciation assessment using STT transcript
    * This uses the accurate transcript from STT for better pronunciation assessment
    */
-  private async doScriptedPronunciationAssessment(referenceText: string): Promise<void> {
+  private async doScriptedPronunciationAssessment(referenceText: string, audioSnapshot?: Buffer[]): Promise<void> {
     console.log(`[Azure] Step 2 - Starting scripted pronunciation assessment`)
     console.log(`[Azure] Reference text being used: "${referenceText}"`)
     console.log(`[Azure] Reference text length: ${referenceText.length}`)
@@ -235,9 +250,8 @@ export class AzureSpeechRecognizer {
     
     console.log('[Azure] Scripted pronunciation assessment config applied')
     
-    // Replay buffered audio for assessment
-    // Make a copy of the buffer to avoid race conditions
-    const audioBufferCopy = [...this.audioBuffer]
+    // Replay buffered audio for assessment (use snapshot if provided)
+    const audioBufferCopy = audioSnapshot ? [...audioSnapshot] : [...this.audioBuffer]
     
     if (audioBufferCopy.length > 0) {
       const totalAudio = Buffer.concat(audioBufferCopy)
