@@ -1,4 +1,6 @@
 import * as sdk from 'microsoft-cognitiveservices-speech-sdk'
+import { mkdir, writeFile, appendFile } from 'fs/promises'
+import { join } from 'path'
 
 export interface PronunciationAssessmentResult {
   accuracyScore: number
@@ -22,6 +24,7 @@ export interface AzureSpeechRecognizerConfig {
   onResult?: (result: PronunciationAssessmentResult, text: string) => void
   onTranscript?: (text: string, isFinal: boolean) => void // Callback for STT transcripts (Step 1)
   onError?: (error: Error) => void
+  sessionId?: string // Optional session/call identifier for debug dumps
 }
 
 export class AzureSpeechRecognizer {
@@ -33,14 +36,20 @@ export class AzureSpeechRecognizer {
   private config: AzureSpeechRecognizerConfig
   private audioBuffer: Buffer[] = [] // Buffer audio chunks for two-step processing
   private audioBufferBytes = 0
-  private readonly maxAudioBufferBytes = 320_000 // ~20 seconds at 8kHz 16-bit mono
+  private readonly maxAudioBufferBytes = 900_000 // ~20 seconds at 8kHz 16-bit mono
+  private readonly preRollBytes = 8_000 // ~0.5s pre-roll to avoid chopping the start
   private isProcessing = false // Flag to prevent concurrent processing
   private currentUtterance: Buffer[] = [] // Chunks for current utterance
   private currentUtteranceBytes = 0
+  private utteranceActive = false
   private assessmentQueue: Array<{ referenceText: string; audio: Buffer[] }> = []
+  private utteranceCounter = 0
+  private readonly testingBaseDir = join(process.cwd(), 'testing')
+  private readonly sessionId?: string
 
   constructor(config: AzureSpeechRecognizerConfig) {
     this.config = config
+    this.sessionId = config.sessionId
 
     const subscriptionKey = process.env.AZURE_SPEECH_KEY
     const region = process.env.AZURE_SPEECH_REGION
@@ -84,6 +93,9 @@ export class AzureSpeechRecognizer {
     // Handle interim (partial) recognition results - shows what Azure is hearing in real-time
     this.recognizer.recognizing = (s, e) => {
       if (e.result.text) {
+        if (!this.utteranceActive) {
+          this.beginUtteranceWithPreroll()
+        }
         console.log(`[Azure] Recognizing (partial): "${e.result.text}"`)
         // Notify about partial transcript
         if (this.config.onTranscript) {
@@ -161,13 +173,15 @@ export class AzureSpeechRecognizer {
     this.audioBuffer.push(copy)
     this.audioBufferBytes += copy.length
 
-    // Track current utterance audio
-    this.currentUtterance.push(copy)
-    this.currentUtteranceBytes += copy.length
-    while (this.currentUtteranceBytes > this.maxAudioBufferBytes && this.currentUtterance.length > 0) {
-      const removedUtterance = this.currentUtterance.shift()
-      if (removedUtterance) {
-        this.currentUtteranceBytes -= removedUtterance.length
+    // Track current utterance audio only while active
+    if (this.utteranceActive) {
+      this.currentUtterance.push(copy)
+      this.currentUtteranceBytes += copy.length
+      while (this.currentUtteranceBytes > this.maxAudioBufferBytes && this.currentUtterance.length > 0) {
+        const removedUtterance = this.currentUtterance.shift()
+        if (removedUtterance) {
+          this.currentUtteranceBytes -= removedUtterance.length
+        }
       }
     }
 
@@ -193,15 +207,76 @@ export class AzureSpeechRecognizer {
    */
   private enqueueAssessment(referenceText: string): void {
     const audioSnapshot = [...this.currentUtterance]
+    const utteranceIndex = ++this.utteranceCounter
+
+    this.dumpUtteranceAudio(audioSnapshot, referenceText, utteranceIndex).catch((err) => {
+      console.error('[Azure] Failed to dump utterance audio:', err)
+    })
+
     this.assessmentQueue.push({ referenceText, audio: audioSnapshot })
     this.currentUtterance = []
     this.currentUtteranceBytes = 0
+    this.utteranceActive = false
     this.processAssessmentQueue().catch((error) => {
       console.error('[Azure] Error in assessment queue:', error)
       if (this.config.onError) {
         this.config.onError(error instanceof Error ? error : new Error(String(error)))
       }
     })
+  }
+
+  /**
+   * Dump the utterance audio snapshot to disk for debugging (testing/session_<id>/<n>.wav)
+   * and append the reference text mapping.
+   */
+  private async dumpUtteranceAudio(audioSnapshot: Buffer[], referenceText: string, index: number): Promise<void> {
+    if (audioSnapshot.length === 0) return
+    const pcm = Buffer.concat(audioSnapshot)
+    const dir = join(this.testingBaseDir, `session_${this.sessionId || 'unknown'}`)
+    await mkdir(dir, { recursive: true })
+
+    // Build minimal WAV header for 8kHz, 16-bit, mono PCM
+    const dataSize = pcm.length
+    const header = Buffer.alloc(44)
+    header.write('RIFF', 0)
+    header.writeUInt32LE(36 + dataSize, 4)
+    header.write('WAVE', 8)
+    header.write('fmt ', 12)
+    header.writeUInt32LE(16, 16) // PCM header size
+    header.writeUInt16LE(1, 20) // PCM format
+    header.writeUInt16LE(1, 22) // channels
+    header.writeUInt32LE(8000, 24) // sample rate
+    header.writeUInt32LE(8000 * 2, 28) // byte rate (sampleRate * blockAlign)
+    header.writeUInt16LE(2, 32) // block align (channels * bytesPerSample)
+    header.writeUInt16LE(16, 34) // bits per sample
+    header.write('data', 36)
+    header.writeUInt32LE(dataSize, 40)
+
+    const wav = Buffer.concat([header, pcm])
+    const wavPath = join(dir, `${index}.wav`)
+    await writeFile(wavPath, wav)
+
+    const mapPath = join(dir, 'utterances.txt')
+    const line = `#${index}: ${referenceText}\n`
+    await appendFile(mapPath, line)
+  }
+
+  /**
+   * Start a new utterance capture and seed with pre-roll from the rolling buffer.
+   */
+  private beginUtteranceWithPreroll(): void {
+    this.utteranceActive = true
+    this.currentUtterance = []
+    this.currentUtteranceBytes = 0
+
+    // Seed with pre-roll from the tail of the rolling buffer
+    let bytesNeeded = this.preRollBytes
+    for (let i = this.audioBuffer.length - 1; i >= 0 && bytesNeeded > 0; i--) {
+      const buf = this.audioBuffer[i]
+      this.currentUtterance.unshift(buf)
+      this.currentUtteranceBytes += buf.length
+      bytesNeeded -= buf.length
+    }
   }
 
   /**

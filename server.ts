@@ -123,10 +123,10 @@ app.prepare().then(() => {
     console.log('[Media Stream] WebSocket connection established')
     console.log('[Media Stream] Request URL:', req.url)
     console.log('[Media Stream] Request headers:', req.headers)
-
+    
     const url = parse(req.url || '', true)
     const callSidFromQuery = url.query?.callSid as string | undefined
-
+    
     let recognizer: AzureSpeechRecognizer | null = null
     let uvSocket: WebSocket | null = null
     let uvCallId: string | null = null
@@ -235,10 +235,11 @@ app.prepare().then(() => {
       if (!process.env.AZURE_SPEECH_KEY || !process.env.AZURE_SPEECH_REGION) {
         console.error('[Azure] Missing credentials: AZURE_SPEECH_KEY or AZURE_SPEECH_REGION not set')
         ws.send(JSON.stringify({ event: 'error', message: 'Azure Speech credentials not configured' }))
-        return
-      }
-
+                  return
+                }
+                
       recognizer = new AzureSpeechRecognizer({
+        sessionId: streamSid || callSidFromQuery || 'unknown',
         onTranscript: (text, isFinal) => {
           console.log(`[Azure] Transcript (${isFinal ? 'final' : 'partial'}): "${text}"`)
         },
@@ -277,57 +278,57 @@ app.prepare().then(() => {
               }
             }
 
-            const resultsDir = join(process.cwd(), 'results')
-            await mkdir(resultsDir, { recursive: true })
-            const filename = `pronunciation_${streamSid || 'unknown'}.txt`
-            const filepath = join(resultsDir, filename)
-            const fileExists = await access(filepath).then(() => true).catch(() => false)
-
-            let content = ''
-            if (!fileExists) {
-              const callStartTime = new Date().toISOString()
+                  const resultsDir = join(process.cwd(), 'results')
+                  await mkdir(resultsDir, { recursive: true })
+                  const filename = `pronunciation_${streamSid || 'unknown'}.txt`
+                  const filepath = join(resultsDir, filename)
+                  const fileExists = await access(filepath).then(() => true).catch(() => false)
+                  
+                  let content = ''
+                  if (!fileExists) {
+                    const callStartTime = new Date().toISOString()
               content += `Pronunciation Assessment Results\n`
               content += `===============================\n`
-              content += `Call Start Time: ${callStartTime}\n`
-              content += `Stream SID: ${streamSid || 'N/A'}\n`
+                    content += `Call Start Time: ${callStartTime}\n`
+                    content += `Stream SID: ${streamSid || 'N/A'}\n`
               content += `Call SID: ${callSidFromQuery || 'N/A'}\n`
               content += `Ultravox Call ID: ${uvCallId || 'N/A'}\n`
-              content += `\n${'='.repeat(60)}\n\n`
-            }
-
-            const timestamp = new Date().toISOString()
+                    content += `\n${'='.repeat(60)}\n\n`
+                  }
+                  
+                  const timestamp = new Date().toISOString()
             content += `Result #${azureResultCount}\n`
-            content += `Timestamp: ${timestamp}\n`
-            content += `Recognized Text: "${text}"\n\n`
-            content += `Scores:\n`
-            content += `  Accuracy: ${result.accuracyScore}%\n`
-            content += `  Pronunciation: ${result.pronunciationScore}%\n`
-            content += `  Completeness: ${result.completenessScore}%\n`
-            content += `  Fluency: ${result.fluencyScore}%\n`
-            content += `  Prosody: ${result.prosodyScore}%\n\n`
-
-            if (result.words && result.words.length > 0) {
-              content += `Word-level Details:\n`
-              result.words.forEach((word, idx) => {
-                content += `  ${idx + 1}. "${word.word}": ${word.accuracyScore}% (${word.errorType || 'None'})\n`
-              })
-              content += `\n`
-            }
-
-            content += `${'-'.repeat(60)}\n\n`
-            await appendFile(filepath, content, 'utf-8')
-            console.log(`[Results] Appended result to ${filepath}`)
-          } catch (error) {
-            console.error('[Results] Error saving to file:', error)
-          }
-        },
-        onError: (error) => {
-          console.error('[Azure] Error:', error)
+                  content += `Timestamp: ${timestamp}\n`
+                  content += `Recognized Text: "${text}"\n\n`
+                  content += `Scores:\n`
+                  content += `  Accuracy: ${result.accuracyScore}%\n`
+                  content += `  Pronunciation: ${result.pronunciationScore}%\n`
+                  content += `  Completeness: ${result.completenessScore}%\n`
+                  content += `  Fluency: ${result.fluencyScore}%\n`
+                  content += `  Prosody: ${result.prosodyScore}%\n\n`
+                  
+                  if (result.words && result.words.length > 0) {
+                    content += `Word-level Details:\n`
+                    result.words.forEach((word, idx) => {
+                      content += `  ${idx + 1}. "${word.word}": ${word.accuracyScore}% (${word.errorType || 'None'})\n`
+                    })
+                    content += `\n`
+                  }
+                  
+                  content += `${'-'.repeat(60)}\n\n`
+                  await appendFile(filepath, content, 'utf-8')
+                  console.log(`[Results] Appended result to ${filepath}`)
+                } catch (error) {
+                  console.error('[Results] Error saving to file:', error)
+                }
+              },
+              onError: (error) => {
+                console.error('[Azure] Error:', error)
           ws.send(JSON.stringify({ event: 'error', message: error.message }))
-        },
-      })
-
-      recognizer.start()
+              },
+            })
+            
+            recognizer.start()
       console.log('[Azure] Recognizer started for pronunciation assessment')
     }
 
@@ -378,15 +379,15 @@ app.prepare().then(() => {
         if (recognizer && message.media?.payload) {
           try {
             const pcmBuffer = convertTwilioAudioToPcm(message.media.payload)
-            if (pcmBuffer.length > 0) {
-              recognizer.writeAudioChunk(pcmBuffer)
+              if (pcmBuffer.length > 0) {
+                recognizer.writeAudioChunk(pcmBuffer)
+              }
+            } catch (error) {
+              console.error('[Media Stream] Error processing audio:', error)
             }
-          } catch (error) {
-            console.error('[Media Stream] Error processing audio:', error)
           }
-        }
-      } else if (message.event === 'stop') {
-        console.log('[Media Stream] Stream stopped')
+        } else if (message.event === 'stop') {
+          console.log('[Media Stream] Stream stopped')
         cleanup()
         if (streamSid) {
           logCallSummary(streamSid)
