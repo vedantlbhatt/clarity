@@ -37,7 +37,7 @@ export class AzureSpeechRecognizer {
   private audioBuffer: Buffer[] = [] // Buffer audio chunks for two-step processing
   private audioBufferBytes = 0
   private readonly maxAudioBufferBytes = 900_000 // ~20 seconds at 8kHz 16-bit mono
-  private readonly preRollBytes = 8_000 // ~0.5s pre-roll to avoid chopping the start
+  private readonly preRollBytes = 32_000 // ~0.5s pre-roll to avoid chopping the start
   private isProcessing = false // Flag to prevent concurrent processing
   private currentUtterance: Buffer[] = [] // Chunks for current utterance
   private currentUtteranceBytes = 0
@@ -123,7 +123,7 @@ export class AzureSpeechRecognizer {
         }
         
         console.log(`[Azure] Step 1 text passed validation check, proceeding to Step 2 with referenceText: "${text}"`)
-        this.enqueueAssessment(text)
+        this.enqueueAssessment(text, e.result.duration)
       } else {
         console.log(`[Azure] Recognition event but not RecognizedSpeech - Reason: ${e.result.reason}`)
       }
@@ -205,15 +205,15 @@ export class AzureSpeechRecognizer {
   /**
    * Queue an assessment for the current utterance using a snapshot of the buffered audio.
    */
-  private enqueueAssessment(referenceText: string): void {
-    const audioSnapshot = [...this.currentUtterance]
+  private enqueueAssessment(referenceText: string, durationTicks?: number): void {
+    const snapshot = this.buildSnapshotFromRollingBuffer(durationTicks)
     const utteranceIndex = ++this.utteranceCounter
 
-    this.dumpUtteranceAudio(audioSnapshot, referenceText, utteranceIndex).catch((err) => {
+    this.dumpUtteranceAudio(snapshot, referenceText, utteranceIndex).catch((err) => {
       console.error('[Azure] Failed to dump utterance audio:', err)
     })
 
-    this.assessmentQueue.push({ referenceText, audio: audioSnapshot })
+    this.assessmentQueue.push({ referenceText, audio: snapshot })
     this.currentUtterance = []
     this.currentUtteranceBytes = 0
     this.utteranceActive = false
@@ -223,6 +223,36 @@ export class AzureSpeechRecognizer {
         this.config.onError(error instanceof Error ? error : new Error(String(error)))
       }
     })
+  }
+
+  /**
+   * Build a snapshot from the rolling buffer using the recognized duration (ticks).
+   * Falls back to currentUtterance if duration is unavailable.
+   */
+  private buildSnapshotFromRollingBuffer(durationTicks?: number): Buffer[] {
+    // durationTicks is in 100-ns units. Convert to ms, then to bytes (8kHz * 2 bytes).
+    const durationMs = durationTicks ? durationTicks / 10_000 : 0
+    const durationBytes = durationMs > 0 ? Math.floor((durationMs / 1000) * 16_000) : 0
+
+    // Target bytes: duration + pre-roll, bounded by maxAudioBufferBytes
+    const targetBytes = Math.min(
+      this.maxAudioBufferBytes,
+      (durationBytes > 0 ? durationBytes : 0) + this.preRollBytes
+    )
+
+    // If we have no duration info and currentUtterance has data, use it
+    if (targetBytes === this.preRollBytes && this.currentUtterance.length > 0) {
+      return [...this.currentUtterance]
+    }
+
+    const snapshot: Buffer[] = []
+    let bytesNeeded = targetBytes > 0 ? targetBytes : this.preRollBytes
+    for (let i = this.audioBuffer.length - 1; i >= 0 && bytesNeeded > 0; i--) {
+      const buf = this.audioBuffer[i]
+      snapshot.unshift(buf)
+      bytesNeeded -= buf.length
+    }
+    return snapshot
   }
 
   /**
