@@ -430,6 +430,12 @@ export class AzureSpeechRecognizer {
                 console.log('  Word-level details:')
                 assessmentResult.words.forEach((word, idx) => {
                   console.log(`    ${idx + 1}. "${word.word}": ${word.accuracyScore}% (${word.errorType || 'None'})`)
+                if (word.phonemes && word.phonemes.length > 0) {
+                  const phonemeDetails = word.phonemes
+                    .map((p) => `${p.phoneme}:${p.accuracyScore}%`)
+                    .join(', ')
+                  console.log(`       Phonemes: ${phonemeDetails}`)
+                }
                 })
               }
               
