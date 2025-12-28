@@ -34,7 +34,7 @@ export async function handleFeedbackAt60Seconds(
     // Generate feedback with Gemini
     let feedbackText: string
     try {
-      feedbackText = await generateFeedback(processedData, {
+      //feedbackText = await generateFeedback(processedData, {
         tone: 'encouraging',
         focus: 'all',
       })

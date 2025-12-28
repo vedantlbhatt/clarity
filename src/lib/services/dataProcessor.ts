@@ -75,7 +75,7 @@ export function processCallData(sessionData: CallSessionData): ProcessedCallData
     // Find problem phonemes (under 60% accuracy)
     if (result.words) {
       result.words.forEach((word) => {
-        if (word.accuracyScore < 60) {
+        if (word.accuracyScore < 70) {
           problemWords.push({
             word: word.word,
             accuracy: word.accuracyScore,
@@ -85,7 +85,7 @@ export function processCallData(sessionData: CallSessionData): ProcessedCallData
 
         if (word.phonemes) {
           word.phonemes.forEach((phoneme) => {
-            if (phoneme.accuracyScore < 60) {
+            if (phoneme.accuracyScore < 80) {
               problemPhonemes.push({
                 phoneme: phoneme.phoneme,
                 word: word.word,

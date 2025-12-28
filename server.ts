@@ -12,6 +12,9 @@ import { join } from 'path'
 import { AzureSpeechRecognizer } from './src/lib/external/azureSpeech'
 import { convertTwilioAudioToPcm } from './src/lib/utils/audioConversion'
 import { createUltravoxCall } from './src/lib/external/ultravox'
+import { CallSession } from './src/lib/session/callSession'
+import { processCallData } from './src/lib/services/dataProcessor'
+import { generateFeedback } from './src/lib/services/feedbackGenerator'
 
 const dev = process.env.NODE_ENV !== 'production'
 const hostname = 'localhost'
@@ -44,6 +47,7 @@ type SessionData = {
 }
 
 const sessions = new Map<string, SessionData>()
+const callSessions = new Map<string, CallSession>()
 
 const appendTranscript = async (
   streamSid: string,
@@ -133,6 +137,33 @@ app.prepare().then(() => {
     let streamSid: string | null = null
     let azureResultCount = 0
     const pendingToUltravox: string[] = []
+    const finalizeCall = async (sid?: string) => {
+      if (!sid) return
+      const session = callSessions.get(sid)
+      if (!session) return
+      try {
+        const data = session.getData()
+        const processed = processCallData(data)
+        // Pretty-print to avoid [Object] placeholders in nested structures
+        console.log('[Feedback] Processed call data:', JSON.stringify(processed, null, 2))
+
+        if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() !== '') {
+          try {
+            //const feedback = await generateFeedback(processed, { tone: 'encouraging', focus: 'all' })
+            //console.log('[Feedback] Generated feedback:', feedback)
+          } catch (err) {
+            console.error('[Feedback] Error generating feedback:', err)
+          }
+        } else {
+          console.log('[Feedback] GEMINI_API_KEY not set; skipping LLM feedback generation')
+        }
+      } catch (err) {
+        console.error('[Feedback] Error processing call data:', err)
+      } finally {
+        session.cleanup()
+        callSessions.delete(sid)
+      }
+    }
 
     const cleanup = () => {
       if (recognizer) {
@@ -150,7 +181,12 @@ app.prepare().then(() => {
 
     const ensureUltravox = async () => {
       if (uvSocket) return
-      const uvCall = await createUltravoxCall()
+      const uvCall = await createUltravoxCall({
+        firstSpeaker: 'FIRST_SPEAKER_AGENT',
+        // Must match firstSpeaker; default is user, so set agent here to avoid 400
+        firstSpeakerSettings: { agent: {} },
+        systemPrompt: 'Open with one short, interesting question to get the caller talking.',
+      })
       uvCallId = uvCall.callId
       console.log('[Ultravox] Call created:', uvCallId)
 
@@ -242,6 +278,12 @@ app.prepare().then(() => {
         sessionId: streamSid || callSidFromQuery || 'unknown',
         onTranscript: (text, isFinal) => {
           console.log(`[Azure] Transcript (${isFinal ? 'final' : 'partial'}): "${text}"`)
+          if (streamSid) {
+            const session = callSessions.get(streamSid)
+            if (session) {
+              session.addAzureTranscript(text, isFinal)
+            }
+          }
         },
         onResult: async (result, text) => {
           azureResultCount += 1
@@ -257,6 +299,7 @@ app.prepare().then(() => {
           try {
             if (streamSid) {
               const s = sessions.get(streamSid)
+              const session = callSessions.get(streamSid)
               if (s) {
                 s.pronunciationResults.push({
                   text,
@@ -276,8 +319,11 @@ app.prepare().then(() => {
                   })),
                 })
               }
-            }
-
+                if (session) {
+                  session.addAzureResult(result, text)
+              }
+                }
+                
                   const resultsDir = join(process.cwd(), 'results')
                   await mkdir(resultsDir, { recursive: true })
                   const filename = `pronunciation_${streamSid || 'unknown'}.txt`
@@ -368,6 +414,7 @@ app.prepare().then(() => {
           aiTranscripts: [],
           pronunciationResults: [],
         })
+        callSessions.set(sid, new CallSession(sid, message.start?.callSid || callSidFromQuery))
         try {
           await ensureUltravox()
         } catch (error: any) {
@@ -381,6 +428,10 @@ app.prepare().then(() => {
             const pcmBuffer = convertTwilioAudioToPcm(message.media.payload)
               if (pcmBuffer.length > 0) {
                 recognizer.writeAudioChunk(pcmBuffer)
+              if (streamSid) {
+                const session = callSessions.get(streamSid)
+                session?.addAudioChunk(pcmBuffer)
+              }
               }
             } catch (error) {
               console.error('[Media Stream] Error processing audio:', error)
@@ -391,6 +442,7 @@ app.prepare().then(() => {
         cleanup()
         if (streamSid) {
           logCallSummary(streamSid)
+          void finalizeCall(streamSid)
           sessions.delete(streamSid)
         }
       }
@@ -401,6 +453,7 @@ app.prepare().then(() => {
       cleanup()
       if (streamSid) {
         logCallSummary(streamSid)
+        void finalizeCall(streamSid)
         sessions.delete(streamSid)
       }
     })
@@ -410,6 +463,7 @@ app.prepare().then(() => {
       cleanup()
       if (streamSid) {
         logCallSummary(streamSid)
+        void finalizeCall(streamSid)
         sessions.delete(streamSid)
       }
     })
