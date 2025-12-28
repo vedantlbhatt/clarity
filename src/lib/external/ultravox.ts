@@ -24,7 +24,7 @@ export interface UltravoxCallResponse {
 }
 
 const DEFAULT_CONFIG: UltravoxCallConfig = {
-  systemPrompt: 'You are a concise, helpful voice agent. Keep replies brief and natural.',
+  systemPrompt: 'You are the user\'s good friend. Keep replies brief and natural. Make sure every response prompts the user to speak in some way; carry the conversation on at all times.',
   model: 'fixie-ai/ultravox',
   voice: 'Mark',
   temperature: 0.3,
