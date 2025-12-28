@@ -16,6 +16,43 @@ import { CallSession } from './src/lib/session/callSession'
 import { processCallData } from './src/lib/services/dataProcessor'
 import { generateFeedback } from './src/lib/services/feedbackGenerator'
 
+const ISSUE_BANK = {
+  fillers: {
+    common: ['um', 'uh', 'like', 'you know', 'you see', 'i mean'],
+    replacements: {
+      um: 'Pause 1s',
+      uh: 'Breathe',
+      like: 'Pause after noun',
+      'you know': 'Short silence',
+      'you see': 'Look \u2192 pause',
+      'i mean': 'Breathe',
+    },
+  },
+} as const
+
+type DetectedFillers = {
+  count: number
+  unique: string[]
+  needsCoaching: boolean
+}
+
+const detectFillers = (transcript: string): DetectedFillers => {
+  const text = transcript.toLowerCase()
+  let total = 0
+  const hits: string[] = []
+  ISSUE_BANK.fillers.common.forEach((f) => {
+    const escaped = f.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')
+    const regex = new RegExp(`\\b${escaped}\\b`, 'gi')
+    const matches = text.match(regex)
+    if (matches && matches.length > 0) {
+      total += matches.length
+      hits.push(f)
+    }
+  })
+  const unique = Array.from(new Set(hits)).slice(0, 3)
+  return { count: total, unique, needsCoaching: total > 4 }
+}
+
 const dev = process.env.NODE_ENV !== 'production'
 const hostname = 'localhost'
 const port = parseInt(process.env.PORT || '3000', 10)
@@ -137,6 +174,20 @@ app.prepare().then(() => {
     let streamSid: string | null = null
     let azureResultCount = 0
     const pendingToUltravox: string[] = []
+    let coachingSent = false
+    const sendCallState = (state: any) => {
+      if (!uvSocket || uvSocket.readyState !== WebSocket.OPEN) {
+        console.warn('[Ultravox] Cannot send call state, socket not open')
+        return
+      }
+      uvSocket.send(
+        JSON.stringify({
+          type: 'updateCallState',
+          state,
+        })
+      )
+      console.log('[Ultravox] Sent updateCallState:', state)
+    }
     const finalizeCall = async (sid?: string) => {
       if (!sid) return
       const session = callSessions.get(sid)
@@ -185,7 +236,15 @@ app.prepare().then(() => {
         firstSpeaker: 'FIRST_SPEAKER_AGENT',
         // Must match firstSpeaker; default is user, so set agent here to avoid 400
         firstSpeakerSettings: { agent: {} },
-        systemPrompt: 'Open with one short, interesting question to get the caller talking.',
+        systemPrompt: [
+          'Open with one short, interesting question to get the caller talking.',
+          'Always keep replies brief and spoken-conversational.',
+          'Read the latest callState if present:',
+          "- If callState.coaching is true and callState.type === 'fillers':",
+          "  • Say a quick tip that uses callState.fix and names the fillers in callState.fillers.",
+          "  • Then read the drill once: callState.drill.",
+          'After delivering coaching, continue normal conversation and keep it light.'
+        ].join(' '),
       })
       uvCallId = uvCall.callId
       console.log('[Ultravox] Call created:', uvCallId)
@@ -284,6 +343,22 @@ app.prepare().then(() => {
               session.addAzureTranscript(text, isFinal)
             }
           }
+          // Early filler coaching based on final STT text (even if PA fails)
+          if (isFinal && !coachingSent) {
+            const fillers = detectFillers(text || '')
+            if (fillers.needsCoaching) {
+              const cleaned = (text || '').replace(/\b(um|uh|like|you know|you see|i mean)\b/gi, '').replace(/\s+/g, ' ')
+              sendCallState({
+                coaching: true,
+                type: 'fillers',
+                fillers: fillers.unique,
+                count: fillers.count,
+                fix: 'Pause 1s instead of fillers',
+                drill: `[pause] ${cleaned.trim()} [pause]`,
+              })
+              coachingSent = true
+            }
+          }
         },
         onResult: async (result, text) => {
           azureResultCount += 1
@@ -297,6 +372,26 @@ app.prepare().then(() => {
           })
 
           try {
+            // Detect fillers and send coaching state once per call
+            if (!coachingSent) {
+              const fillers = detectFillers(text || '')
+              if (fillers.needsCoaching) {
+                const cleaned = (text || '').replace(
+                  /\b(um|uh|like|you know|you see|i mean)\b/gi,
+                  ''
+                )
+                sendCallState({
+                  coaching: true,
+                  type: 'fillers',
+                  fillers: fillers.unique,
+                  count: fillers.count,
+                  fix: 'Pause 1s instead of fillers',
+                  drill: `[pause] ${cleaned.trim()} [pause]`,
+                })
+                coachingSent = true
+              }
+            }
+
             if (streamSid) {
               const s = sessions.get(streamSid)
               const session = callSessions.get(streamSid)
