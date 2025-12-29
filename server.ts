@@ -30,6 +30,17 @@ const ISSUE_BANK = {
   },
 } as const
 
+// Broader filler patterns to catch variants like "uhh", "ummm", and punctuation.
+const FILLER_PATTERNS: Array<{ key: string; re: RegExp }> = [
+  { key: 'uh', re: /\bu+h+[.,!?;:]?\b/gi },
+  { key: 'um', re: /\bu+m+[.,!?;:]?\b/gi },
+  { key: 'like', re: /\blike\b/gi },
+  { key: 'you know', re: /\byou\s+know\b/gi },
+  { key: 'you see', re: /\byou\s+see\b/gi },
+  { key: 'i mean', re: /\bi\s+mean\b/gi },
+  { key: 'hmm', re: /\bhm+m+[.,!?;:]?\b/gi },
+]
+
 type DetectedFillers = {
   count: number
   unique: string[]
@@ -40,13 +51,11 @@ const detectFillers = (transcript: string): DetectedFillers => {
   const text = transcript.toLowerCase()
   let total = 0
   const hits: string[] = []
-  ISSUE_BANK.fillers.common.forEach((f) => {
-    const escaped = f.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')
-    const regex = new RegExp(`\\b${escaped}\\b`, 'gi')
-    const matches = text.match(regex)
+  FILLER_PATTERNS.forEach(({ key, re }) => {
+    const matches = text.match(re)
     if (matches && matches.length > 0) {
       total += matches.length
-      hits.push(f)
+      hits.push(key)
     }
   })
   const unique = Array.from(new Set(hits)).slice(0, 3)
@@ -175,6 +184,8 @@ app.prepare().then(() => {
     let azureResultCount = 0
     const pendingToUltravox: string[] = []
     let coachingSent = false
+    let cumulativeFillerCount = 0
+    const cumulativeFillers = new Set<string>()
     const sendCallState = (state: any) => {
       if (!uvSocket || uvSocket.readyState !== WebSocket.OPEN) {
         console.warn('[Ultravox] Cannot send call state, socket not open')
@@ -239,11 +250,11 @@ app.prepare().then(() => {
         systemPrompt: [
           'Open with one short, interesting question to get the caller talking.',
           'Always keep replies brief and spoken-conversational.',
-          'Read the latest callState if present:',
-          "- If callState.coaching is true and callState.type === 'fillers':",
-          "  • Say a quick tip that uses callState.fix and names the fillers in callState.fillers.",
-          "  • Then read the drill once: callState.drill.",
-          'After delivering coaching, continue normal conversation and keep it light.'
+          'Always read the latest callState and act immediately:',
+          "- If callState.coaching is true AND callState.type === 'fillers':",
+          "  • Give a quick tip using {{callState.fix}} and mention {{callState.fillers}}.",
+          "  • Then speak the drill: {{callState.drill}}.",
+          'Do this as soon as you receive the state, only once per update, then continue normal conversation and keep it light.'
         ].join(' '),
       })
       uvCallId = uvCall.callId
@@ -346,16 +357,25 @@ app.prepare().then(() => {
           // Early filler coaching based on final STT text (even if PA fails)
           if (isFinal && !coachingSent) {
             const fillers = detectFillers(text || '')
-            if (fillers.needsCoaching) {
+            cumulativeFillerCount += fillers.count
+            fillers.unique.forEach((f) => cumulativeFillers.add(f))
+            const hits = Array.from(cumulativeFillers).slice(0, 3)
+            // Trigger once total fillers reach 3 across the call
+            if (cumulativeFillerCount >= 3) {
               const cleaned = (text || '').replace(/\b(um|uh|like|you know|you see|i mean)\b/gi, '').replace(/\s+/g, ' ')
+              const drillText = cleaned.trim() === '' ? (text || '').trim() : cleaned.trim()
               sendCallState({
                 coaching: true,
                 type: 'fillers',
-                fillers: fillers.unique,
-                count: fillers.count,
+                fillers: hits,
+                count: cumulativeFillerCount,
                 fix: 'Pause 1s instead of fillers',
-                drill: `[pause] ${cleaned.trim()} [pause]`,
+                drill: `[pause] ${drillText} [pause]`,
               })
+              // Clear coaching state shortly after sending so the agent doesn't repeat it.
+              setTimeout(() => {
+                sendCallState({ coaching: false })
+              }, 1500)
               coachingSent = true
             }
           }
@@ -372,25 +392,7 @@ app.prepare().then(() => {
           })
 
           try {
-            // Detect fillers and send coaching state once per call
-            if (!coachingSent) {
-              const fillers = detectFillers(text || '')
-              if (fillers.needsCoaching) {
-                const cleaned = (text || '').replace(
-                  /\b(um|uh|like|you know|you see|i mean)\b/gi,
-                  ''
-                )
-                sendCallState({
-                  coaching: true,
-                  type: 'fillers',
-                  fillers: fillers.unique,
-                  count: fillers.count,
-                  fix: 'Pause 1s instead of fillers',
-                  drill: `[pause] ${cleaned.trim()} [pause]`,
-                })
-                coachingSent = true
-              }
-            }
+            // No filler accumulation here; we only accumulate on STT final (onTranscript)
 
             if (streamSid) {
               const s = sessions.get(streamSid)
