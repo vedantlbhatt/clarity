@@ -258,7 +258,7 @@ function hexToRgb(hex: string) {
 export default function FaultyTerminal({
   scale = 1.5,
   gridMul = [2, 1],
-  digitSize = 1.5,
+  digitSize = 1.2,
   timeScale = 0.4,
   pause = false,
   scanlineIntensity = 0.3,
@@ -268,7 +268,7 @@ export default function FaultyTerminal({
   chromaticAberration = 0,
   dither = 0,
   curvature = 0.1,
-  tint = "#ffffff",
+  tint = "#8a90f0",
   mouseReact = true,
   mouseStrength = 0.2,
   dpr,
