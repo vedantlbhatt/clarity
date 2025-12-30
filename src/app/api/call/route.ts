@@ -1,13 +1,23 @@
 import { NextResponse } from 'next/server'
 import { createCall } from '../../../lib/services/callService'
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
-    // Thin API route: validate and delegate to service layer
+    const body = await request.json().catch(() => ({}))
+    const phone = body?.phone?.toString().trim()
+    const from = process.env.TWILIO_FROM_NUMBER
+
+    if (!phone) {
+      return NextResponse.json({ error: 'Missing phone' }, { status: 400 })
+    }
+    if (!from) {
+      return NextResponse.json({ error: 'TWILIO_FROM_NUMBER not set' }, { status: 500 })
+    }
+
     const result = await createCall({
-      to: '+14043331778',
-      from: '+18668961216',
-      message: 'Sigmamundo!',
+      to: phone,
+      from,
+      message: 'Connecting you to the Ultravox agent.',
     })
 
     return NextResponse.json({
