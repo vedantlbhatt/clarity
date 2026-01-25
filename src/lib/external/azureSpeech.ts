@@ -65,6 +65,12 @@ export class AzureSpeechRecognizer {
     // Enable detailed output format to get word-level confidence
     this.speechConfig.setProperty(sdk.PropertyId.SpeechServiceResponse_RequestWordLevelTimestamps, "true")
     this.speechConfig.outputFormat = sdk.OutputFormat.Detailed
+    // Keep disfluencies (true text) so filler words are not stripped
+    this.speechConfig.setServiceProperty(
+      "simple-speech",
+      "true-text",
+      sdk.ServicePropertyChannel.UriQueryParameter
+    )
 
     // Create push audio input stream for real-time audio
     // Azure Pronunciation Assessment works better with 16kHz, but Twilio sends 8kHz
