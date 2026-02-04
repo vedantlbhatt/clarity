@@ -15,8 +15,8 @@ export async function POST(request: Request) {
     }
 
     const result = await createCall({
-      to: phone,
-      from,
+      to: phone as string,
+      from: from as string,
       message: 'Connecting you to the Ultravox agent.',
     })
 

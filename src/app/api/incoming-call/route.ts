@@ -22,10 +22,16 @@ export async function POST(request: NextRequest) {
     }
     
     // Get base URL for Media Stream WebSocket
-    // Priority: NEXT_PUBLIC_BASE_URL > Request headers > VERCEL_URL
+    // Priority: NEXT_PUBLIC_BASE_URL > RAILWAY_PUBLIC_DOMAIN > Request headers > VERCEL_URL
     let baseUrl = process.env.NEXT_PUBLIC_BASE_URL || ''
     
-    // If no baseUrl from env, try to get from request headers
+    // If no baseUrl from env, try Railway's public domain
+    if (!baseUrl && process.env.RAILWAY_PUBLIC_DOMAIN) {
+      baseUrl = `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+      console.log('[Incoming Call] Using Railway public domain:', baseUrl)
+    }
+    
+    // If still no baseUrl, try to get from request headers
     if (!baseUrl) {
       const host = request.headers.get('host') || ''
       const protocol = request.headers.get('x-forwarded-proto') || 

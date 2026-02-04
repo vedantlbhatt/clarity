@@ -63,7 +63,8 @@ const detectFillers = (transcript: string): DetectedFillers => {
 }
 
 const dev = process.env.NODE_ENV !== 'production'
-const hostname = 'localhost'
+// Railway sets hostname automatically, use '0.0.0.0' for production to bind to all interfaces
+const hostname = process.env.RAILWAY_ENVIRONMENT ? '0.0.0.0' : 'localhost'
 const port = parseInt(process.env.PORT || '3000', 10)
 
 const app = next({ dev, hostname, port })
