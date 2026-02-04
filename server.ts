@@ -63,8 +63,13 @@ const detectFillers = (transcript: string): DetectedFillers => {
 }
 
 const dev = process.env.NODE_ENV !== 'production'
-// Railway sets hostname automatically, use '0.0.0.0' for production to bind to all interfaces
-const hostname = process.env.RAILWAY_ENVIRONMENT ? '0.0.0.0' : 'localhost'
+// Railway/Vercel: bind to 0.0.0.0 in production to accept external connections
+// Check for Railway, Vercel, or production environment
+const isProduction = process.env.NODE_ENV === 'production' || 
+                     process.env.RAILWAY_ENVIRONMENT || 
+                     process.env.RAILWAY_PUBLIC_DOMAIN ||
+                     process.env.VERCEL
+const hostname = isProduction ? '0.0.0.0' : 'localhost'
 const port = parseInt(process.env.PORT || '3000', 10)
 
 const app = next({ dev, hostname, port })
