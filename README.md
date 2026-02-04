@@ -1,6 +1,7 @@
 # Clarity
 
 AI-powered phone agent with real-time feedback built with Next.js and Twilio.
+I haven't made demo website yet. Coming soon.
 
 ## Prerequisites
 
