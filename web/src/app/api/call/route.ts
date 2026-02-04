@@ -35,8 +35,8 @@ export async function POST(request: Request) {
     const twimlUrl = `${baseUrl.replace(/\/+$/, "")}/api/incoming-call`;
 
     const call = await client.calls.create({
-      to,
-      from,
+      to: to as string,
+      from: from as string,
       url: twimlUrl,
     });
 
