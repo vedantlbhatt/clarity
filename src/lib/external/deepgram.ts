@@ -22,7 +22,7 @@ export interface DeepgramTranscriberConfig {
 
 export class DeepgramTranscriber {
   private client: ReturnType<typeof createClient>
-  private connection: ReturnType<typeof createClient['listen']['live']> | null = null
+  private connection: any = null // Deepgram live connection type
   private config: DeepgramTranscriberConfig
   private isClosed = false
 
@@ -55,7 +55,7 @@ export class DeepgramTranscriber {
       console.log('[Deepgram] Connection opened')
     })
 
-    this.connection.on(LiveTranscriptionEvents.Transcript, (data) => {
+    this.connection.on(LiveTranscriptionEvents.Transcript, (data: any) => {
       if (data.channel?.alternatives?.[0]) {
         const alternative = data.channel.alternatives[0]
         const transcript = alternative.transcript
@@ -97,7 +97,7 @@ export class DeepgramTranscriber {
       console.log('[Deepgram] Speech started')
     })
 
-    this.connection.on(LiveTranscriptionEvents.UtteranceEnd, (data) => {
+    this.connection.on(LiveTranscriptionEvents.UtteranceEnd, (data: any) => {
       console.log('[Deepgram] Utterance ended')
     })
 
@@ -105,7 +105,7 @@ export class DeepgramTranscriber {
       console.log('[Deepgram] Connection closed')
     })
 
-    this.connection.on(LiveTranscriptionEvents.Error, (error) => {
+    this.connection.on(LiveTranscriptionEvents.Error, (error: any) => {
       console.error('[Deepgram] Error:', error)
       if (this.config.onError) {
         this.config.onError(new Error(error.message || 'Deepgram error'))

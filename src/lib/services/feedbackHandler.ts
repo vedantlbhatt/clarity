@@ -34,11 +34,11 @@ export async function handleFeedbackAt60Seconds(
     // Generate feedback with Gemini
     let feedbackText: string
     try {
-      //feedbackText = await generateFeedback(processedData, {
-        tone: 'encouraging',
-        focus: 'all',
-      })
-      console.log('[Feedback Handler] Generated feedback:', feedbackText)
+      // feedbackText = await generateFeedback(processedData, {
+      //   tone: 'encouraging',
+      //   focus: 'all',
+      // })
+      // console.log('[Feedback Handler] Generated feedback:', feedbackText)
     } catch (error: any) {
       console.error('[Feedback Handler] Error generating feedback:', error)
       feedbackText = "Thanks for practicing! Keep working on your pronunciation and fluency."

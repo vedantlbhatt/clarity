@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@deepgram/sdk": "^4.11.3",
+    "@google/generative-ai": "^0.24.1",
     "alawmulaw": "^2.0.0",
     "dotenv": "^17.2.3",
     "microsoft-cognitiveservices-speech-sdk": "^1.40.0",
