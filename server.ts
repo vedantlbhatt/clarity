@@ -338,7 +338,8 @@ app.prepare().then(() => {
         })
       }
 
-      const resultsPath = join(process.cwd(), 'results', `pronunciation_${sid}.txt`)
+      const dateStr = new Date().toISOString().split('T')[0] // YYYY-MM-DD
+      const resultsPath = join(process.cwd(), 'results', `${dateStr}_pronunciation_${sid}.txt`)
       console.log(`  Detailed file: ${resultsPath}`)
     }
 
@@ -429,7 +430,8 @@ app.prepare().then(() => {
                 
                   const resultsDir = join(process.cwd(), 'results')
                   await mkdir(resultsDir, { recursive: true })
-                  const filename = `pronunciation_${streamSid || 'unknown'}.txt`
+                  const dateStr = new Date().toISOString().split('T')[0] // YYYY-MM-DD
+                  const filename = `${dateStr}_pronunciation_${streamSid || 'unknown'}.txt`
                   const filepath = join(resultsDir, filename)
                   const fileExists = await access(filepath).then(() => true).catch(() => false)
                   
